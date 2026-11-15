@@ -1,0 +1,11 @@
+{
+  "name": "gahonsh-social-autopilot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Free daily social + blog autopilot for GAHONSH, built on Google Apps Script and Google Calendar",
+  "scripts": {
+    "test": "node tests/local-test.js",
+    "check": "for f in *.gs; do cp \"$f\" \"/tmp/${f%.gs}.js\"; node --check \"/tmp/${f%.gs}.js\" || exit 1; done; echo 'all .gs files parse'"
+  },
+  "license": "MIT"
+}
