@@ -137,3 +137,69 @@ function sendTestToTelegram() {
   post.caption = 'This is a test of the GAHONSH autopilot. Website: ' + CONFIG.website;
   return publishTelegram_(post, '');
 }
+
+/**
+ * What every channel needs right now. Run this first when something looks off:
+ * it tells you, per channel, whether it is switched on and which property is
+ * still empty, without publishing anything.
+ */
+function channelCheck() {
+  var report = channelMatrix();
+  Logger.log(JSON.stringify(report, null, 2));
+  return report;
+}
+
+/**
+ * Real test: post one clearly marked test message to every enabled channel and
+ * return a per channel pass/fail report, then write it to the log sheet.
+ * This is the function to run when you want proof of what works and what does not.
+ */
+function testAllChannels() {
+  var post = buildDailyPost(new Date());
+  post.type = 'test';
+  post.title = 'GAHONSH autopilot test - ' + post.dateKey;
+  post.headline = 'Autopilot test post';
+  post.caption = 'This is a test post from the GAHONSH social autopilot. If you can read this, the channel is working.\n\nWebsites, web apps and APIs, built properly.';
+  post.hashtags = '#GAHONSH #WebDevelopment #NodeJS';
+
+  var image = { ok: false, skipped: true };
+  if (prop_('PUBLISH_IMAGE', 'yes') === 'yes') {
+    try { image = buildBrandImage(post); } catch (err) { image = { ok: false, error: String(err) }; }
+  }
+  var imageUrl = post.imageUrl || (image.ok ? image.url : '');
+  var results = publishAll_(post, imageUrl);
+
+  var report = {
+    at: new Date().toISOString(),
+    imageUrl: imageUrl,
+    channels: results.map(function (r) {
+      return {
+        channel: r.channel,
+        status: r.ok ? 'OK' : (r.skipped ? 'SKIPPED (not configured)' : 'FAILED'),
+        id: r.id || '',
+        url: r.url || '',
+        error: r.error || r.note || ''
+      };
+    }),
+    ok: results.filter(function (r) { return r.ok; }).map(function (r) { return r.channel; }),
+    failed: results.filter(function (r) { return !r.ok; }).map(function (r) { return r.channel; })
+  };
+
+  try {
+    logRun_({
+      dateKey: post.dateKey,
+      type: 'test',
+      occasion: '',
+      headline: post.headline,
+      ok: report.ok.join(','),
+      failed: report.failed.join(','),
+      image: imageUrl,
+      detail: JSON.stringify(results).slice(0, 4000)
+    });
+  } catch (err) {
+    Logger.log('test log failed: ' + err);
+  }
+
+  Logger.log(JSON.stringify(report, null, 2));
+  return report;
+}

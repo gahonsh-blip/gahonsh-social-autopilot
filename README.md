@@ -19,16 +19,26 @@ Nothing is ever posted twice in one day: the run marks the date in Script Proper
 
 | Channel | Cost today | What you need |
 | --- | --- | --- |
-| Blogger (real blog post, image, hashtags) | Free | a Blogger blog + one authorisation click |
+| Blogger (real blog post, image, hashtags) | Free | the blog already exists (`gahonsh.blogspot.com`), just approve the scope |
 | Telegram channel | Free | a bot token from @BotFather and a channel id |
-| Facebook Page | Free, but needs a Meta app | Page access token; Meta app review for `pages_manage_posts` |
+| Bluesky | Free | account + app password. No developer app, no review |
+| Mastodon | Free | account + access token. No review |
+| Dev.to | Free | api key. Each post becomes an indexable article |
+| Facebook Page | Free, needs a Meta app | a **Page** plus a Page access token (`pages_manage_posts`) |
 | Instagram Business | Free, needs a Meta app + business verification | IG business account id + token |
 | LinkedIn | Free, needs an approved LinkedIn app | access token + author URN |
-| X / Twitter | **Paid** since the API v2 revamp | paid API tier, bearer token |
+| X / Twitter | Free tier allows posting | developer app with OAuth 1.0a **user** keys. An app-only bearer token can never post |
 
-Blogger and Telegram are the two channels that work today with zero cost and zero
-app review, so the project is useful immediately. The rest are written and tested
-for failure isolation; switch them on when you have the tokens.
+Five channels (Blogger, Telegram, Bluesky, Mastodon, Dev.to) need no app review and
+no payment. The four that need a developer app are fully coded and isolated: they
+are skipped cleanly until their tokens exist, and a failure in one never blocks the
+others. See [docs/CHANNELS.md](docs/CHANNELS.md) for the account inventory and the
+order that gets real posts fastest.
+
+Run `channelCheck()` at any time to see, per channel, whether it is switched on and
+which property is still empty. Run `testAllChannels()` to publish one real test post
+to every enabled channel and get a pass/fail report, without waiting for the daily
+trigger.
 
 ## Setup, step by step
 
@@ -53,13 +63,20 @@ for failure isolation; switch them on when you have the tokens.
 
 | Property | Default | Meaning |
 | --- | --- | --- |
-| `BLOGGER_BLOG_ID` | none | target blog |
+| `BLOGGER_BLOG_ID` | built in | target blog, defaults to `gahonsh.blogspot.com` |
 | `PUBLISH_BLOGGER` | `yes` | switch Blogger on/off |
 | `PUBLISH_TELEGRAM` | `yes` | switch Telegram on/off |
+| `PUBLISH_BLUESKY` | `yes` | needs `BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD` |
+| `PUBLISH_MASTODON` | `yes` | needs `MASTODON_INSTANCE`, `MASTODON_ACCESS_TOKEN` |
+| `PUBLISH_DEVTO` | `yes` | needs `DEVTO_API_KEY` |
 | `PUBLISH_FACEBOOK` | `no` | needs `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN` |
 | `PUBLISH_INSTAGRAM` | `no` | needs `INSTAGRAM_BUSINESS_ACCOUNT_ID`, `INSTAGRAM_ACCESS_TOKEN` |
 | `PUBLISH_LINKEDIN` | `no` | needs `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_AUTHOR_URN` |
-| `PUBLISH_X` | `no` | needs paid `TWITTER_BEARER_TOKEN` |
+| `X_CONSUMER_KEY` | none | OAuth 1.0a consumer key |
+| `X_CONSUMER_SECRET` | none | OAuth 1.0a consumer secret |
+| `X_ACCESS_TOKEN` | none | OAuth 1.0a user token |
+| `X_ACCESS_TOKEN_SECRET` | none | OAuth 1.0a user token secret |
+| `PUBLISH_X` | `no` | needs the four `X_*` keys above. Never a bearer token alone |
 | `PUBLISH_IMAGE` | `yes` | build the branded image with Slides |
 | `BILINGUAL_HINDI` | `yes` | add a Hindi line to festival posts |
 | `POST_HOUR`, `POST_MINUTE` | `8`, `30` | daily run time, Asia/Kolkata |

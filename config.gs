@@ -12,6 +12,7 @@ var CONFIG = {
   whatsapp: 'https://wa.me/919999999999',
   timezone: 'Asia/Kolkata',
   driveFolder: 'GAHONSH Social',
+  defaultBlogId: '4592871834916952562', // gahonsh.blogspot.com, read from the public feed
   logSheetName: 'GAHONSH Social Post Log',
   logTabName: 'PostLog'
 };

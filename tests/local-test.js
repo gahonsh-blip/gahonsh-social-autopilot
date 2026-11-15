@@ -65,6 +65,14 @@ function makeSandbox(options) {
         return date.toISOString();
       },
       sleep: () => {},
+      newBlob: (data) => {
+        const buf = Buffer.from(String(data), 'utf8');
+        return { getBytes: () => Array.from(buf), getContentType: () => 'image/png', setName: () => ({}) };
+      },
+      computeHmacSignature: (algo, value, key) =>
+        Array.from(require('crypto').createHmac('sha1', String(key)).update(String(value)).digest()),
+      base64Encode: (bytes) => Buffer.from(bytes).toString('base64'),
+      MacAlgorithm: { HMAC_SHA_1: 'HMAC_SHA_1' },
     },
     ScriptApp: {
       getOAuthToken: () => 'stub-token',
@@ -229,13 +237,16 @@ test('a failing channel does not stop the others', () => {
   assert.ok(httpLog.length >= 2, 'both channels should have been attempted');
 });
 
-test('unconfigured channels are skipped, not treated as errors', () => {
-  const { context } = makeSandbox({ props: { PUBLISH_BLOGGER: 'yes', PUBLISH_IMAGE: 'no' } });
+test('blogger falls back to the built-in blog id, unconfigured channels are skipped', () => {
+  const { context, httpLog } = makeSandbox({ props: { PUBLISH_BLOGGER: 'yes', PUBLISH_IMAGE: 'no' } });
   const run = vm.runInContext('runDailyPost', context);
   const result = run();
   const blogger = result.results.find((r) => r.channel === 'blogger');
-  assert.strictEqual(blogger.skipped, true);
-  assert.strictEqual(result.ok, false, 'nothing published means ok is false');
+  assert.strictEqual(blogger.ok, true, JSON.stringify(blogger));
+  assert.ok(httpLog[0].url.indexOf('4592871834916952562') !== -1, 'real blog id not used');
+  const telegram = result.results.find((r) => r.channel === 'telegram');
+  assert.strictEqual(telegram.skipped, true);
+  assert.strictEqual(result.ok, true);
 });
 
 /* ---------------------------------------------------------------- *
@@ -258,6 +269,120 @@ test('the same date always produces the same headline', () => {
   const post = vm.runInContext('buildDailyPost', context);
   const date = new Date(Date.UTC(2026, 6, 15));
   assert.strictEqual(post(date).headline, post(date).headline);
+});
+
+
+/* ---------------------------------------------------------------- *
+ * 7. Channel matrix: what is ready and what is still missing       *
+ * ---------------------------------------------------------------- */
+test('channel matrix reports ready and missing properties', () => {
+  const { context } = makeSandbox({ props: { BLOGGER_BLOG_ID: '4592871834916952562' } });
+  const matrix = vm.runInContext('channelMatrix', context)();
+  const blogger = matrix.find((row) => row.channel === 'blogger');
+  const telegram = matrix.find((row) => row.channel === 'telegram');
+  const x = matrix.find((row) => row.channel === 'x');
+  assert.strictEqual(blogger.ready, true);
+  assert.strictEqual(blogger.missing.length, 0);
+  assert.strictEqual(telegram.ready, false);
+  assert.ok(telegram.missing.includes('TELEGRAM_BOT_TOKEN'));
+  assert.strictEqual(x.enabled, false);
+  assert.ok(x.missing.includes('X_CONSUMER_KEY'));
+});
+
+/* ---------------------------------------------------------------- *
+ * 8. Bluesky: skipped without keys, correct payload with keys      *
+ * ---------------------------------------------------------------- */
+test('bluesky is skipped cleanly when not configured', () => {
+  const { context } = makeSandbox();
+  const post = vm.runInContext('buildDailyPost', context)(new Date(Date.UTC(2026, 6, 1)));
+  const result = vm.runInContext('publishBluesky_', context)(post, '');
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.skipped, true);
+});
+
+test('bluesky posts a short text with a clickable website facet', () => {
+  const { context, httpLog } = makeSandbox({
+    props: { BLUESKY_HANDLE: 'gahonsh.bsky.social', BLUESKY_APP_PASSWORD: 'xxxx-xxxx-xxxx-xxxx' },
+    http: (url) => {
+      if (url.includes('createSession')) return { code: 200, text: JSON.stringify({ accessJwt: 'jwt', did: 'did:plc:abc' }) };
+      if (url.includes('createRecord')) return { code: 200, text: JSON.stringify({ uri: 'at://did:plc:abc/app.bsky.feed.post/1' }) };
+      return { code: 200, text: '{}' };
+    },
+  });
+  const post = vm.runInContext('buildDailyPost', context)(new Date(Date.UTC(2026, 6, 2)));
+  const result = vm.runInContext('publishBluesky_', context)(post, '');
+  assert.strictEqual(result.ok, true, JSON.stringify(result));
+  const create = httpLog.find((call) => call.url.includes('createRecord'));
+  const record = JSON.parse(create.params.payload).record;
+  assert.ok(record.text.length <= 300, 'bluesky text too long: ' + record.text.length);
+  assert.ok(record.text.includes('https://gahonsh-blip.github.io'));
+  assert.strictEqual(record.facets[0].features[0].$type, 'app.bsky.richtext.facet#link');
+});
+
+/* ---------------------------------------------------------------- *
+ * 9. X: needs OAuth 1.0a user keys, never an app-only bearer        *
+ * ---------------------------------------------------------------- */
+test('x skips when only a bearer token is configured', () => {
+  const { context } = makeSandbox({ props: { TWITTER_BEARER_TOKEN: 'app-only' } });
+  const post = vm.runInContext('buildDailyPost', context)(new Date(Date.UTC(2026, 6, 3)));
+  const result = vm.runInContext('publishX_', context)(post);
+  assert.strictEqual(result.skipped, true);
+  assert.ok(/OAuth 1.0a/.test(result.error));
+});
+
+test('x signs the request and keeps text under 280 characters', () => {
+  const { context, httpLog } = makeSandbox({
+    props: {
+      X_CONSUMER_KEY: 'ck', X_CONSUMER_SECRET: 'cs', X_ACCESS_TOKEN: 'at', X_ACCESS_TOKEN_SECRET: 'ats',
+    },
+    http: () => ({ code: 201, text: JSON.stringify({ data: { id: '1799' } }) }),
+  });
+  const post = vm.runInContext('buildDailyPost', context)(new Date(Date.UTC(2026, 6, 4)));
+  const result = vm.runInContext('publishX_', context)(post);
+  assert.strictEqual(result.ok, true, JSON.stringify(result));
+  const call = httpLog[0];
+  const auth = call.params.headers.Authorization;
+  assert.ok(auth.indexOf('OAuth ') === 0, 'not an oauth header');
+  assert.ok(auth.includes('oauth_signature='), 'unsigned request');
+  assert.ok(!/undefined/.test(auth), 'undefined in oauth header');
+  assert.ok(JSON.parse(call.params.payload).text.length <= 280);
+  assert.ok(JSON.parse(call.params.payload).text.includes('https://gahonsh-blip.github.io'));
+});
+
+/* ---------------------------------------------------------------- *
+ * 10. One broken channel never blocks the others                   *
+ * ---------------------------------------------------------------- */
+test('a failing bluesky call does not stop telegram', () => {
+  const { context, httpLog } = makeSandbox({
+    props: {
+      PUBLISH_BLOGGER: 'no', PUBLISH_IMAGE: 'no',
+      BLUESKY_HANDLE: 'a', BLUESKY_APP_PASSWORD: 'b',
+      TELEGRAM_BOT_TOKEN: 'tok', TELEGRAM_CHAT_ID: '-100',
+    },
+    http: (url) => {
+      if (url.includes('bsky.social')) return { code: 500, text: 'boom' };
+      return { code: 200, text: JSON.stringify({ result: { message_id: 7 } }) };
+    },
+  });
+  const post = vm.runInContext('buildDailyPost', context)(new Date(Date.UTC(2026, 6, 5)));
+  const results = vm.runInContext('publishAll_', context)(post, '');
+  const byChannel = results.reduce((acc, r) => Object.assign(acc, { [r.channel]: r }), {});
+  assert.strictEqual(byChannel.bluesky.ok, false);
+  assert.strictEqual(byChannel.telegram.ok, true);
+  assert.ok(httpLog.some((call) => call.url.includes('api.telegram.org')));
+});
+
+/* ---------------------------------------------------------------- *
+ * 11. Telegram caption fits the 1024 character photo limit          *
+ * ---------------------------------------------------------------- */
+test('telegram caption is trimmed to the photo caption limit', () => {
+  const { context, httpLog } = makeSandbox({
+    props: { PUBLISH_BLOGGER: 'no', TELEGRAM_BOT_TOKEN: 'tok', TELEGRAM_CHAT_ID: '-100' },
+  });
+  const post = vm.runInContext('buildDailyPost', context)(new Date(Date.UTC(2026, 6, 6)));
+  vm.runInContext('publishTelegram_', context)(post, 'https://img.example/a.png');
+  const call = httpLog.find((c) => c.url.includes('sendPhoto'));
+  assert.ok(call.params.payload.caption.length <= 1024);
 });
 
 const total = passed + failures.length;
