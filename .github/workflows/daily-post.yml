@@ -1,0 +1,29 @@
+name: Daily post preview
+
+# Renders the same post the Apps Script publishes, so there is always a public,
+# dated page showing exactly what the automation wrote today. No secrets needed.
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 08:30 Asia/Kolkata
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Render today's post
+        run: node render-today.js
+      - name: Commit the page
+        run: |
+          git config user.name "GAHONSH autopilot"
+          git config user.email "gahonsh@gmail.com"
+          git add docs
+          git diff --staged --quiet || git commit -m "post: $(date -u +%Y-%m-%d) preview"
+          git push

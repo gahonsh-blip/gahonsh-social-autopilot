@@ -96,6 +96,26 @@ ${matrix.map((m) => `<tr><td>${m.channel}</td><td class="${m.ready ? 'ok' : 'gap
 ${rows.map((r) => `<tr><td>${r.name}</td><td class="${r.fits ? 'ok' : 'gap'}">${r.len} chars (limit ${r.limit})</td></tr>`).join('')}
 </table></div>
 </main></body></html>`;
-fs.mkdirSync(path.join(__dirname, 'docs'), { recursive: true });
-fs.writeFileSync(path.join(__dirname, 'docs', 'today.html'), html);
-console.log('\nwrote docs/today.html');
+const docs = path.join(__dirname, 'docs');
+const archive = path.join(docs, 'archive');
+fs.mkdirSync(archive, { recursive: true });
+fs.writeFileSync(path.join(docs, 'today.html'), html);
+fs.writeFileSync(path.join(archive, post.dateKey + '.html'), html);
+
+// Index of every day that has been generated, newest first.
+const days = fs.readdirSync(archive).filter((f) => /\.html$/.test(f)).sort().reverse();
+const index = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GAHONSH autopilot - post archive</title>
+<style>:root{--teal:#12776A;--bg:#F7F5F0;--ink:#12211F}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,Segoe UI,Roboto,sans-serif}
+header{background:var(--teal);color:#fff;padding:28px 20px}header h1{margin:0;font-size:22px}
+main{max-width:720px;margin:0 auto;padding:24px 20px 60px}
+ul{list-style:none;padding:0}li{background:#fff;border:1px solid #e6e1d6;border-radius:12px;margin-bottom:10px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center}
+a{color:var(--teal);text-decoration:none;font-weight:600}.muted{color:#64706d;font-size:13px}</style></head>
+<body><header><h1>GAHONSH autopilot - post archive</h1></header><main>
+<p class="muted">One entry per day. The newest is also at <a href="today.html">today.html</a>.</p>
+<ul>${days.map((f) => `<li><a href="archive/${f}">${f.replace('.html', '')}</a><span class="muted">${f.replace('.html', '') === post.dateKey ? 'latest' : ''}</span></li>`).join('')}</ul>
+</main></body></html>`;
+fs.writeFileSync(path.join(docs, 'index.html'), index);
+console.log('\nwrote docs/today.html, docs/archive/' + post.dateKey + '.html, docs/index.html');
