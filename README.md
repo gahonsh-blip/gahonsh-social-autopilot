@@ -15,6 +15,17 @@ Every day at 08:30 IST it:
 
 Nothing is ever posted twice in one day: the run marks the date in Script Properties.
 
+## Live pages
+
+The generated post is published automatically to GitHub Pages:
+https://gahonsh-blip.github.io/gahonsh-social-autopilot/
+(newest day at `/today.html`, every day at `/archive/`).
+
+`docs/daily-post-workflow.yml` is the scheduled runner that refreshes it at 08:30 IST.
+GitHub only accepts it at `.github/workflows/daily-post.yml`, and a token needs the
+`workflow` scope to place it there. Move the file into that path, or add the scope,
+and the page refreshes itself every morning.
+
 ## What is free and what is not
 
 | Channel | Cost today | What you need |
