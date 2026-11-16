@@ -92,6 +92,23 @@ function instagramAlreadyPosted_(igId, token, post) {
 // Blogger
 // ---------------------------------------------------------------------------
 
+/**
+ * Static OAuth scope activation.
+ *
+ * Apps Script decides which scopes to ask the owner for by scanning the project
+ * for API usage. The Blogger publisher below talks to the REST API through
+ * UrlFetchApp, which only asks for script.external_request, so the blogger scope
+ * would never be granted and the access token could not create a post.
+ * Referencing BloggerApp anywhere in the project makes Apps Script request
+ * https://www.googleapis.com/auth/blogger. The branch below never executes.
+ */
+function bloggerScopeProbe_() {
+  if (false) {
+    BloggerApp.getBlogs();
+  }
+  return true;
+}
+
 function publishBlogger_(post, imageUrl) {
   var blogId = prop_('BLOGGER_BLOG_ID', CONFIG.defaultBlogId || '');
   if (!blogId) return { channel: 'blogger', ok: false, skipped: true, error: 'missing BLOGGER_BLOG_ID' };
