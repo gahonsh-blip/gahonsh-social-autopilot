@@ -38,6 +38,57 @@ function fullText_(post) {
 }
 
 // ---------------------------------------------------------------------------
+// Cross-system duplicate guards.
+// The old automation may still be running while this one takes over, so before
+// posting, look at the Page's own recent posts. If today's headline is already
+// there, report it instead of posting a second copy.
+// ---------------------------------------------------------------------------
+
+function graphGet_(path) {
+  try {
+    var res = UrlFetchApp.fetch('https://graph.facebook.com/v20.0/' + path, { muteHttpExceptions: true, followRedirects: true });
+    if (res.getResponseCode() !== 200) return null;
+    return JSON.parse(res.getContentText());
+  } catch (err) {
+    return null;
+  }
+}
+
+function sameDay_(isoString, dateKey) {
+  if (!isoString) return false;
+  try {
+    return Utilities.formatDate(new Date(isoString), CONFIG.timezone, 'yyyy-MM-dd') === dateKey;
+  } catch (err) {
+    return String(isoString).slice(0, 10) === dateKey;
+  }
+}
+
+function headlineSeen_(text, post) {
+  var needle = String(post.headline || '').slice(0, 32).toLowerCase();
+  return !!needle && String(text || '').toLowerCase().indexOf(needle) !== -1;
+}
+
+function facebookAlreadyPosted_(pageId, token, post) {
+  if (String(prop_('SKIP_IF_ALREADY_POSTED', 'yes')).toLowerCase() !== 'yes') return null;
+  var data = graphGet_(pageId + '/posts?fields=message,created_time&limit=10&access_token=' + encodeURIComponent(token));
+  var items = (data && data.data) || [];
+  for (var i = 0; i < items.length; i++) {
+    if (sameDay_(items[i].created_time, post.dateKey) && headlineSeen_(items[i].message, post)) return items[i].id;
+  }
+  return null;
+}
+
+function instagramAlreadyPosted_(igId, token, post) {
+  if (String(prop_('SKIP_IF_ALREADY_POSTED', 'yes')).toLowerCase() !== 'yes') return null;
+  var data = graphGet_(igId + '/media?fields=caption,timestamp&limit=10&access_token=' + encodeURIComponent(token));
+  var items = (data && data.data) || [];
+  for (var i = 0; i < items.length; i++) {
+    if (sameDay_(items[i].timestamp, post.dateKey) && headlineSeen_(items[i].caption, post)) return items[i].id;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Blogger
 // ---------------------------------------------------------------------------
 
@@ -128,8 +179,8 @@ function bskySession_(handle, appPassword) {
 }
 
 function publishBluesky_(post, imageUrl) {
-  var handle = prop_('BLUESKY_HANDLE');
-  var appPassword = prop_('BLUESKY_APP_PASSWORD');
+  var handle = propAny_(['BLUESKY_HANDLE', 'BSKY_HANDLE']);
+  var appPassword = propAny_(['BLUESKY_APP_PASSWORD', 'BSKY_APP_PASSWORD']);
   if (!handle || !appPassword) return { channel: 'bluesky', ok: false, skipped: true, error: 'missing BLUESKY_HANDLE or BLUESKY_APP_PASSWORD' };
   try {
     var session = bskySession_(handle, appPassword);
@@ -189,7 +240,7 @@ function publishBluesky_(post, imageUrl) {
 
 function publishMastodon_(post, imageUrl) {
   var instance = prop_('MASTODON_INSTANCE');
-  var token = prop_('MASTODON_ACCESS_TOKEN');
+  var token = propAny_(['MASTODON_ACCESS_TOKEN', 'MASTODON_TOKEN']);
   if (!instance || !token) return { channel: 'mastodon', ok: false, skipped: true, error: 'missing MASTODON_INSTANCE or MASTODON_ACCESS_TOKEN' };
   try {
     var base = instance.replace(/\/+$/, '');
@@ -272,9 +323,11 @@ function publishDevTo_(post, imageUrl) {
 // ---------------------------------------------------------------------------
 
 function publishFacebook_(post, imageUrl) {
-  var pageId = prop_('FACEBOOK_PAGE_ID');
-  var token = prop_('FACEBOOK_PAGE_ACCESS_TOKEN');
+  var pageId = propAny_(['META_PAGE_ID', 'FACEBOOK_PAGE_ID']);
+  var token = propAny_(['META_PAGE_TOKEN', 'FACEBOOK_PAGE_ACCESS_TOKEN']);
   if (!pageId || !token) return { channel: 'facebook', ok: false, skipped: true, error: 'missing page id or token' };
+  var alreadyFb = facebookAlreadyPosted_(pageId, token, post);
+  if (alreadyFb) return { channel: 'facebook', ok: true, skipped: true, id: alreadyFb, note: 'already posted today on the page' };
   try {
     var endpoint = imageUrl
       ? 'https://graph.facebook.com/v20.0/' + pageId + '/photos'
@@ -299,10 +352,12 @@ function publishFacebook_(post, imageUrl) {
 // ---------------------------------------------------------------------------
 
 function publishInstagram_(post, imageUrl) {
-  var igId = prop_('INSTAGRAM_BUSINESS_ACCOUNT_ID');
-  var token = prop_('INSTAGRAM_ACCESS_TOKEN');
+  var igId = propAny_(['META_IG_ID', 'INSTAGRAM_BUSINESS_ACCOUNT_ID']);
+  var token = propAny_(['META_PAGE_TOKEN', 'INSTAGRAM_ACCESS_TOKEN']);
   if (!igId || !token) return { channel: 'instagram', ok: false, skipped: true, error: 'missing instagram ids' };
   if (!imageUrl) return { channel: 'instagram', ok: false, skipped: true, error: 'instagram requires an image url' };
+  var alreadyIg = instagramAlreadyPosted_(igId, token, post);
+  if (alreadyIg) return { channel: 'instagram', ok: true, skipped: true, id: alreadyIg, note: 'already posted today on instagram' };
   try {
     var create = UrlFetchApp.fetch('https://graph.facebook.com/v20.0/' + igId + '/media', {
       method: 'post',
@@ -428,10 +483,10 @@ function oauth1Header_(method, url, consumerKey, consumerSecret, token, tokenSec
 }
 
 function publishX_(post) {
-  var key = prop_('X_CONSUMER_KEY');
-  var secret = prop_('X_CONSUMER_SECRET');
-  var token = prop_('X_ACCESS_TOKEN');
-  var tokenSecret = prop_('X_ACCESS_TOKEN_SECRET');
+  var key = propAny_(['X_API_KEY', 'X_CONSUMER_KEY']);
+  var secret = propAny_(['X_API_SECRET', 'X_CONSUMER_SECRET']);
+  var token = propAny_(['X_ACCESS_TOKEN']);
+  var tokenSecret = propAny_(['X_ACCESS_SECRET', 'X_ACCESS_TOKEN_SECRET']);
   if (!key || !secret || !token || !tokenSecret) {
     return { channel: 'x', ok: false, skipped: true, error: 'missing OAuth 1.0a user keys (X_CONSUMER_KEY, X_CONSUMER_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET)' };
   }
@@ -455,64 +510,155 @@ function publishX_(post) {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// YouTube Shorts (YouTube Data API v3 through the built-in advanced service).
+// The video itself is rendered by the free GitHub Action and fetched from the
+// public manifest, because Apps Script cannot encode video and every paid or
+// "free trial" video API eventually asks for a card.
+// ---------------------------------------------------------------------------
+
+function publishYouTube_(post, imageUrl, media) {
+  if (typeof YouTube === 'undefined' || !YouTube.Videos) {
+    return { channel: 'youtube', ok: false, skipped: true, error: 'advanced service not added: Services (+) -> YouTube Data API v3' };
+  }
+  var video = media && media.video;
+  if (!video || !video.url) {
+    return { channel: 'youtube', ok: false, skipped: true, error: 'no video for ' + post.dateKey + ' (manifest empty or stale)' };
+  }
+  try {
+    var download = UrlFetchApp.fetch(video.url, { muteHttpExceptions: true, followRedirects: true });
+    if (download.getResponseCode() !== 200) {
+      return { channel: 'youtube', ok: false, error: 'video_download_http_' + download.getResponseCode() };
+    }
+    var blob = download.getBlob();
+    if (blob.getBytes().length < 20000) {
+      return { channel: 'youtube', ok: false, error: 'video_too_small_' + blob.getBytes().length };
+    }
+    blob.setContentType('video/mp4');
+
+    var tags = String(post.hashtags || '').split(/\s+/)
+      .filter(function (tag) { return tag.charAt(0) === '#'; })
+      .map(function (tag) { return tag.slice(1); })
+      .slice(0, 12);
+
+    var resource = {
+      snippet: {
+        title: truncate_(video.title || post.headline, 95),
+        description: truncate_((video.description || post.caption) + '\n\n' + CONFIG.website, 4900),
+        tags: tags,
+        categoryId: '22'
+      },
+      status: { privacyStatus: 'public', embeddable: true, selfDeclaredMadeForKids: false }
+    };
+
+    var created = YouTube.Videos.insert(resource, 'snippet,status', blob);
+    var id = created.id;
+
+    // An unaudited Google project can be forced to private. Verify, do not assume.
+    var privacy = '';
+    try {
+      var check = YouTube.Videos.list('status', { id: id });
+      if (check && check.items && check.items.length) privacy = check.items[0].status.privacyStatus;
+    } catch (ignored) {}
+
+    return {
+      channel: 'youtube',
+      ok: true,
+      id: id,
+      url: 'https://www.youtube.com/shorts/' + id,
+      note: privacy && privacy !== 'public' ? 'uploaded but privacy=' + privacy + ' (project needs YouTube API audit)' : 'public'
+    };
+  } catch (err) {
+    return { channel: 'youtube', ok: false, error: String(err && err.message ? err.message : err) };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Channel registry
 // ---------------------------------------------------------------------------
 
-/** Every channel, whether it is switched on, and what it still needs. */
+/** Every channel, whether it can run right now, and what it still needs. */
 function channelMatrix() {
   var rows = [
-    { name: 'blogger', switch: 'PUBLISH_BLOGGER', on: 'yes', needs: ['BLOGGER_BLOG_ID'] },
-    { name: 'telegram', switch: 'PUBLISH_TELEGRAM', on: 'yes', needs: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'] },
-    { name: 'bluesky', switch: 'PUBLISH_BLUESKY', on: 'yes', needs: ['BLUESKY_HANDLE', 'BLUESKY_APP_PASSWORD'] },
-    { name: 'mastodon', switch: 'PUBLISH_MASTODON', on: 'yes', needs: ['MASTODON_INSTANCE', 'MASTODON_ACCESS_TOKEN'] },
-    { name: 'devto', switch: 'PUBLISH_DEVTO', on: 'yes', needs: ['DEVTO_API_KEY'] },
-    { name: 'facebook', switch: 'PUBLISH_FACEBOOK', on: 'no', needs: ['FACEBOOK_PAGE_ID', 'FACEBOOK_PAGE_ACCESS_TOKEN'] },
-    { name: 'instagram', switch: 'PUBLISH_INSTAGRAM', on: 'no', needs: ['INSTAGRAM_BUSINESS_ACCOUNT_ID', 'INSTAGRAM_ACCESS_TOKEN'] },
-    { name: 'linkedin', switch: 'PUBLISH_LINKEDIN', on: 'no', needs: ['LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_AUTHOR_URN'] },
-    { name: 'x', switch: 'PUBLISH_X', on: 'no', needs: ['X_CONSUMER_KEY', 'X_CONSUMER_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_TOKEN_SECRET'] }
+    { name: 'blogger', enabled: true, needs: ['BLOGGER_BLOG_ID (optional, falls back to the built-in blog)'] },
+    { name: 'youtube', enabled: true, needs: ['Services (+) -> YouTube Data API v3', 'fresh entry in the video manifest'] },
+    { name: 'telegram', enabled: hasTelegram_(), needs: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'] },
+    { name: 'facebook', enabled: hasFacebook_(), needs: ['META_PAGE_ID', 'META_PAGE_TOKEN'] },
+    { name: 'instagram', enabled: hasInstagram_(), needs: ['META_IG_ID', 'META_PAGE_TOKEN'] },
+    { name: 'linkedin', enabled: hasLinkedIn_(), needs: ['LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_AUTHOR_URN'] },
+    { name: 'x', enabled: hasX_(), needs: ['X_API_KEY', 'X_API_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET'] },
+    { name: 'bluesky', enabled: hasBluesky_(), needs: ['BSKY_HANDLE', 'BSKY_APP_PASSWORD'] },
+    { name: 'mastodon', enabled: hasMastodon_(), needs: ['MASTODON_INSTANCE', 'MASTODON_TOKEN'] },
+    { name: 'devto', enabled: hasDevTo_(), needs: ['DEVTO_API_KEY'] }
   ];
   return rows.map(function (row) {
-    var missing = row.needs.filter(function (key) { return !prop_(key); });
+    var off = channelDisabled_(row.name);
     return {
       channel: row.name,
-      enabled: enabled_(row.switch, row.on),
-      configured: missing.length === 0,
-      missing: missing,
-      ready: enabled_(row.switch, row.on) && missing.length === 0
+      enabled: row.enabled && !off,
+      ready: row.enabled && !off,
+      needs: off ? [] : row.needs,
+      status: off ? 'switched off (DISABLE_' + row.name.toUpperCase() + '=yes)' : (row.enabled ? 'on' : 'waiting for keys')
     };
   });
 }
 
-/** Which channels to attempt, in order. Every one is failure isolated. */
+/** Which channels to attempt today, in order. Every one is failure isolated. */
 function adapters_() {
   var all = [
-    { name: 'blogger', enabled: enabled_('PUBLISH_BLOGGER', 'yes'), run: publishBlogger_ },
-    { name: 'telegram', enabled: enabled_('PUBLISH_TELEGRAM', 'yes'), run: publishTelegram_ },
-    { name: 'bluesky', enabled: enabled_('PUBLISH_BLUESKY', 'yes'), run: publishBluesky_ },
-    { name: 'mastodon', enabled: enabled_('PUBLISH_MASTODON', 'yes'), run: publishMastodon_ },
-    { name: 'devto', enabled: enabled_('PUBLISH_DEVTO', 'yes'), run: publishDevTo_ },
-    { name: 'facebook', enabled: enabled_('PUBLISH_FACEBOOK', 'no'), run: publishFacebook_ },
-    { name: 'instagram', enabled: enabled_('PUBLISH_INSTAGRAM', 'no'), run: publishInstagram_ },
-    { name: 'linkedin', enabled: enabled_('PUBLISH_LINKEDIN', 'no'), run: publishLinkedIn_ },
-    { name: 'x', enabled: enabled_('PUBLISH_X', 'no'), run: publishX_ }
+    { name: 'blogger', enabled: true, run: publishBlogger_, needsImage: false },
+    { name: 'telegram', enabled: hasTelegram_(), run: publishTelegram_, needsImage: false },
+    { name: 'facebook', enabled: hasFacebook_(), run: publishFacebook_, needsImage: false },
+    { name: 'instagram', enabled: hasInstagram_(), run: publishInstagram_, needsImage: true },
+    { name: 'linkedin', enabled: hasLinkedIn_(), run: publishLinkedIn_, needsImage: false },
+    { name: 'x', enabled: hasX_(), run: publishX_, needsImage: false },
+    { name: 'youtube', enabled: true, run: publishYouTube_, needsImage: false, needsVideo: true },
+    { name: 'bluesky', enabled: hasBluesky_(), run: publishBluesky_, needsImage: false },
+    { name: 'mastodon', enabled: hasMastodon_(), run: publishMastodon_, needsImage: false },
+    { name: 'devto', enabled: hasDevTo_(), run: publishDevTo_, needsImage: false }
   ];
-  return all.filter(function (adapter) { return adapter.enabled; });
+  return all.filter(function (adapter) { return adapter.enabled && !channelDisabled_(adapter.name); });
 }
 
 /**
- * Publish to every enabled channel. Returns per channel results.
- * A thrown error inside one adapter can never stop the others.
+ * One free retry, only for errors that are worth retrying. A 400 or a 401 is a
+ * configuration problem and retrying it just wastes the quota.
  */
-function publishAll_(post, imageUrl) {
+function withRetry_(fn) {
+  var first = fn();
+  if (!first || first.ok || first.skipped) return first;
+  var message = String(first.error || first.note || '');
+  if (!/http_(429|500|502|503|504)|timeout|timed out|try again|temporar/i.test(message)) return first;
+  sleepMs_(3000);
+  var second = fn();
+  if (second) second.retried = true;
+  return second || first;
+}
+
+/**
+ * Publish to every enabled channel. A thrown error inside one adapter can never
+ * stop the others, and every result carries the channel name so the log is useful.
+ */
+function publishAll_(post, imageUrl, media) {
   var results = [];
   adapters_().forEach(function (adapter) {
+    if (adapter.needsImage && !imageUrl) {
+      results.push({ channel: adapter.name, ok: false, skipped: true, error: 'needs a public image url' });
+      return;
+    }
+    if (adapter.needsVideo && !(media && media.video && media.video.url)) {
+      results.push({ channel: adapter.name, ok: false, skipped: true, error: 'no video for today' });
+      return;
+    }
     var result;
     try {
-      result = adapter.run(post, imageUrl);
+      result = withRetry_(function () { return adapter.run(post, imageUrl, media); });
     } catch (err) {
-      result = { channel: adapter.name, ok: false, error: String(err) };
+      result = { channel: adapter.name, ok: false, error: String(err && err.message ? err.message : err) };
     }
+    if (!result) result = { channel: adapter.name, ok: false, error: 'adapter returned nothing' };
+    if (!result.channel) result.channel = adapter.name;
     results.push(result);
   });
   return results;

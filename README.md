@@ -1,153 +1,59 @@
 # GAHONSH Social Autopilot
 
-A free, private daily posting machine for the GAHONSH freelancing brand. It runs
-inside your own Google account with Google Apps Script: no server, no subscription,
-no AI API bill, no third-party scheduler.
+Free, daily, hands-off posting for GAHONSH: one Google Apps Script posts to
+Blogger, Facebook Page, Instagram, LinkedIn, X, YouTube (Shorts), Telegram,
+Bluesky, Mastodon and dev.to, from a content calendar that knows Indian festivals.
 
-Every day at 08:30 IST it:
+No paid API, no phone approval, no manual daily work.
 
-1. reads your Google Calendar for today, so a festival or an all-day event becomes the post,
-2. otherwise picks the day's business topic from a 24 topic bank,
-3. writes a professional English caption (plus a Hindi line for festivals) and always ends with the website link,
-4. draws a branded 1080-style post image with the GAHONSH wordmark and the website URL,
-5. publishes to every channel you have switched on, each one isolated so a failure cannot block the rest,
-6. records the result in a `PostLog` spreadsheet so you can see what went out and what failed.
+## Install
 
-Nothing is ever posted twice in one day: the run marks the date in Script Properties.
+See **[SETUP.md](SETUP.md)**. Short version: paste `GAHONSH_AUTOPILOT.gs` into
+script.google.com, add the YouTube Data API v3 service, add your keys as Script
+Properties, run `setupAll()` once.
 
-## Live pages
+## What it does each morning
 
-The generated post is published automatically to GitHub Pages:
-https://gahonsh-blip.github.io/gahonsh-social-autopilot/
-(newest day at `/today.html`, every day at `/archive/`).
+1. Reads Google's "Holidays in India" calendar (subscribed once) plus your own
+   calendars, so a festival day becomes a festival post with no date list to maintain.
+2. Picks the day's topic from a 24-topic bank on the weekday rhythm, or your own
+   `ContentCalendar` sheet row if you want to override a date.
+3. Draws a 1080x1080 branded card in Google Slides and commits it to
+   `gahonsh-blip.github.io/social/media/` so Instagram has a public JPEG URL.
+4. Posts to every channel whose keys exist, one retry on transient errors,
+   failure isolated per channel, never twice for the same day.
+5. Uploads the day's Short to YouTube (rendered free by ffmpeg on a GitHub runner;
+   falls back to the pre-rendered pool so a Short still goes up).
+6. Writes one row per channel to the `GAHONSH Social Post Log` sheet.
 
-`docs/daily-post-workflow.yml` is the scheduled runner that refreshes it at 08:30 IST.
-GitHub only accepts it at `.github/workflows/daily-post.yml`, and a token needs the
-`workflow` scope to place it there. Move the file into that path, or add the scope,
-and the page refreshes itself every morning.
+## Files
 
-## What is free and what is not
-
-| Channel | Cost today | What you need |
-| --- | --- | --- |
-| Blogger (real blog post, image, hashtags) | Free | the blog already exists (`gahonsh.blogspot.com`), just approve the scope |
-| Telegram channel | Free | a bot token from @BotFather and a channel id |
-| Bluesky | Free | account + app password. No developer app, no review |
-| Mastodon | Free | account + access token. No review |
-| Dev.to | Free | api key. Each post becomes an indexable article |
-| Facebook Page | Free, needs a Meta app | a **Page** plus a Page access token (`pages_manage_posts`) |
-| Instagram Business | Free, needs a Meta app + business verification | IG business account id + token |
-| LinkedIn | Free, needs an approved LinkedIn app | access token + author URN |
-| X / Twitter | Free tier allows posting | developer app with OAuth 1.0a **user** keys. An app-only bearer token can never post |
-
-Five channels (Blogger, Telegram, Bluesky, Mastodon, Dev.to) need no app review and
-no payment. The four that need a developer app are fully coded and isolated: they
-are skipped cleanly until their tokens exist, and a failure in one never blocks the
-others. See [docs/CHANNELS.md](docs/CHANNELS.md) for the account inventory and the
-order that gets real posts fastest.
-
-Run `channelCheck()` at any time to see, per channel, whether it is switched on and
-which property is still empty. Run `testAllChannels()` to publish one real test post
-to every enabled channel and get a pass/fail report, without waiting for the daily
-trigger.
-
-## Setup, step by step
-
-1. **Create the Apps Script project.** Go to https://script.google.com, New project, name it `GAHONSH Social Autopilot`.
-2. **Add the files.** For each `.gs` file in this repo, create a script file with the same name and paste its contents: `config.gs`, `calendar.gs`, `content.gs`, `image.gs`, `publishers.gs`, `Code.gs`, `backfill.gs`. Then open Project Settings and tick *Show `appsscript.json` manifest file*, and replace the manifest with the one from this repo. Save.
-   With the CLI instead: `npm i -g @google/clasp && clasp login && clasp clone <scriptId>` once the project exists, then copy the files in and `clasp push`.
-3. **Create the blog.** If you do not have one, go to https://blogger.com and create a blog (free, e.g. `gahonsh.blogspot.com`). Open it, look at the URL bar: the long number in `blogID=` is your `BLOGGER_BLOG_ID`.
-4. **Set Script Properties.** Project Settings, Script Properties, add:
-   - `BLOGGER_BLOG_ID` = the number from step 3
-   - `PUBLISH_BLOGGER` = `yes`
-   - `PUBLISH_TELEGRAM` = `no` (until you have the two Telegram values)
-   - `PUBLISH_IMAGE` = `yes`
-   - optional `POST_HOUR` = `8`, `POST_MINUTE` = `30`
-5. **Authorise.** In the editor select the function `previewToday` and Run. Google asks for permission: Calendar read, Drive files, Slides, Sheets, Blogger, external requests. Approve all of them (they are the scopes in `appsscript.json`).
-6. **Check the output.** The execution log shows the caption and hashtags that will be posted. If the words are wrong, edit `content.gs` and run again.
-7. **Install the schedule.** Run `installTriggers`. It creates one daily trigger at 08:30 Asia/Kolkata and removes any older duplicate.
-8. **First real run.** Run `runDailyPost`. Open your blog and the `GAHONSH Social Post Log` spreadsheet that was created in your Drive. The log row tells you which channel succeeded.
-9. **Optional: telegram.** Create a bot with @BotFather, add it as an admin of your channel, put `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in Script Properties, set `PUBLISH_TELEGRAM` = `yes`, then run `sendTestToTelegram`.
-10. **Optional: fill the blog.** Run `backfillBlog` with a number, e.g. edit the call to `backfillBlog(10)` in a temporary function, or run it from the editor console as `backfillBlog(10)`. It publishes the last 10 daily posts so the blog does not look empty.
-
-## Script Properties reference
-
-| Property | Default | Meaning |
-| --- | --- | --- |
-| `BLOGGER_BLOG_ID` | built in | target blog, defaults to `gahonsh.blogspot.com` |
-| `PUBLISH_BLOGGER` | `yes` | switch Blogger on/off |
-| `PUBLISH_TELEGRAM` | `yes` | switch Telegram on/off |
-| `PUBLISH_BLUESKY` | `yes` | needs `BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD` |
-| `PUBLISH_MASTODON` | `yes` | needs `MASTODON_INSTANCE`, `MASTODON_ACCESS_TOKEN` |
-| `PUBLISH_DEVTO` | `yes` | needs `DEVTO_API_KEY` |
-| `PUBLISH_FACEBOOK` | `no` | needs `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN` |
-| `PUBLISH_INSTAGRAM` | `no` | needs `INSTAGRAM_BUSINESS_ACCOUNT_ID`, `INSTAGRAM_ACCESS_TOKEN` |
-| `PUBLISH_LINKEDIN` | `no` | needs `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_AUTHOR_URN` |
-| `X_CONSUMER_KEY` | none | OAuth 1.0a consumer key |
-| `X_CONSUMER_SECRET` | none | OAuth 1.0a consumer secret |
-| `X_ACCESS_TOKEN` | none | OAuth 1.0a user token |
-| `X_ACCESS_TOKEN_SECRET` | none | OAuth 1.0a user token secret |
-| `PUBLISH_X` | `no` | needs the four `X_*` keys above. Never a bearer token alone |
-| `PUBLISH_IMAGE` | `yes` | build the branded image with Slides |
-| `BILINGUAL_HINDI` | `yes` | add a Hindi line to festival posts |
-| `POST_HOUR`, `POST_MINUTE` | `8`, `30` | daily run time, Asia/Kolkata |
-| `CONTENT_CALENDAR_SHEET_ID` | none | optional sheet of date overrides |
-| `POSTLOG_SHEET_ID` | auto | created on first run |
-| `DRIVE_FOLDER` | `GAHONSH Social` | where images are saved |
-
-## Content calendar sheet (optional)
-
-Make a Google Sheet with one row per special day, headers in row 1:
-
-```
-date        | type     | topic                                 | caption            | imageUrl
-2026-12-31  | occasion | Year end audit of your website        | (leave empty)      |
-2027-01-05  | business | New year, new landing page            | (leave empty)      |
-```
-
-Share nothing; just paste the sheet id from the URL into `CONTENT_CALENDAR_SHEET_ID`.
-A row here always wins over the built-in calendar.
-
-## What the image looks like
-
-`image.gs` builds it with Google Slides: off-white background, teal top bar, the
-GAHONSH wordmark, the headline, an amber chip with the occasion, the tagline, and
-the website URL. It exports a PNG, saves it to Drive and shares it read-only so
-Facebook, Instagram and Telegram can fetch it. The temporary presentation is moved
-to trash. No logo file is needed; the wordmark is drawn in text so it always
-renders.
+| File | Purpose |
+|---|---|
+| `config.gs` | brand, endpoints, key names, channel auto-detection |
+| `calendar.gs` | holiday calendar, festivals, fixed observances, sheet overrides |
+| `content.gs` | topic bank, captions, hashtags, Hindi festival greeting |
+| `media.gs` | Slides card, JPEG/PNG export, GitHub Pages hosting, video manifest + pool |
+| `publishers.gs` | one adapter per channel, duplicate guards, retry |
+| `code.gs` | orchestrator, triggers, setup, dry run, log |
+| `backfill.gs` | fill the blog with past days |
+| `GAHONSH_AUTOPILOT.gs` | generated single-file build (`node build-bundle.js`) |
 
 ## Tests
 
-```bash
-node tests/local-test.js
+```
+npm run check     # every .gs file parses
+npm test          # 36 mock tests, Google services stubbed
 ```
 
-The harness loads the real `.gs` files into a Node VM with stubbed Google services
-and asserts ten behaviours, including: the website link on every generated post,
-Diwali 2026 detected as a festival, a Google Calendar all-day event detected as a
-festival, one run per day, and a failing channel not blocking the others.
+The suite proves the parts that actually break: festival detection, the link on
+every post, per-channel idempotency, failure isolation, the Instagram
+container-then-publish order, YouTube privacy verification, the media host
+updating an existing file, X OAuth 1.0a signing, and that `dryRun()` posts nothing.
 
-## Troubleshooting
+## Why not just a "free AI video API"
 
-| Symptom | Cause | Fix |
-| --- | --- | --- |
-| `png_export_failed_401` | Slides scope not authorised | re-run authorisation, approve all scopes |
-| Blogger `http_401` | wrong blog id or Blogger scope removed | re-check `BLOGGER_BLOG_ID`, re-authorise |
-| Blogger `http_403` | blog not created yet or not owned by this account | create the blog with the same Google account |
-| Telegram `http_400` | bot is not an admin of the channel | add the bot as channel admin |
-| Telegram photo fails but text arrives | Drive image URL not publicly fetchable | keep `PUBLISH_IMAGE` = `yes`; the adapter retries as text |
-| Nothing runs at 08:30 | trigger not installed, or project paused | run `installTriggers` again, check Triggers page |
-| Two posts in a day | someone ran `runDailyPost` manually after the cron | harmless, the log shows both; the day key stops the cron from repeating |
-| Calendar festival not detected | event is not all-day or title has no festival word | add the date to the Content Calendar sheet |
-
-## Honest limits
-
-- Festival dates for lunar festivals change every year. Only 2026 is built in; from 2027 the reliable source is your Google Calendar, which is why the code reads it first.
-- Apps Script has a 6 minute execution limit per run. The daily job takes a few seconds; the image export is the slowest part.
-- Instagram requires a publicly reachable image URL and a business account. The Drive link normally works, but if Meta rejects it, host the same PNG on the site and use that URL.
-- Poetry-level copywriting is not what this does. It composes clear, honest, professional posts from a curated bank, which is what actually converts for a services business.
-
-See `docs/ROADMAP.md` for moving this to the Vercel + Supabase stack later.
-
-MIT licensed. Built for GAHONSH Company, Bundu, Ranchi, Jharkhand, India.
+None exists at one-video-per-day volume: free tiers end, watermarks appear, or a
+card is required. Pillow and ffmpeg are already on the GitHub runner and cost
+nothing, so the Short is composed from branded cards plus a free neural voice.
+`social/render.py` in the website repo does that at 08:00 IST.

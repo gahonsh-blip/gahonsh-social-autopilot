@@ -2,11 +2,12 @@
  * Calendar + festival awareness.
  *
  * Three sources, in priority order:
- *   1. An all-day event on the owner's Google Calendar that looks like a festival
- *      or a special day (the reliable path: Google already puts most of them there).
- *   2. A built-in list of fixed observances and the major Indian festivals whose
- *      dates are known for 2026.
- *   3. A ContentCalendar sheet the owner can edit without touching code.
+ *   1. Google's built-in Indian holiday calendar (subscribed once by setupAll).
+ *      It carries every festival date for every year, so nothing goes stale.
+ *   2. The owner's own calendars: any all-day event that looks like an occasion.
+ *   3. A built-in list of fixed observances plus the verified 2026 festivals,
+ *      used only when neither calendar answers.
+ *   4. A ContentCalendar sheet the owner can edit without touching code.
  */
 
 var FIXED_OBSERVANCES = {
@@ -55,17 +56,57 @@ var BUSINESS_DAYS = {
   '2026-11-30': 'Cyber Monday'
 };
 
-var FESTIVAL_WORDS = /diwali|holi|eid|christmas|new year|independence|republic|rakhi|raksha|janmashtami|ganesh|dussehra|navratri|durga|puja|pongal|sankranti|lohri|baisakhi|onam|bihu|shivratri|navami|jayanti|birthday|anniversary|festival|holiday/i;
+var FESTIVAL_WORDS = /diwali|deepavali|holi|dussehra|durga|navratri|navaratri|eid|christmas|good friday|new year|independence|republic|rakhi|raksha|janmashtami|ganesh|vinayak|chaturthi|puja|pongal|sankranti|lohri|baisakhi|vaisakhi|onam|bihu|shivratri|navami|jayanti|mahavir|buddha purnima|guru nanak|chhath|karwa|teej|gudi padwa|ugadi|makar|basant|vasant|festival|holiday|anniversary|birthday/i;
 
-function calendarEventsForDay_(date) {
+/**
+ * Subscribe to Google's built-in Indian holiday calendar. It already contains
+ * every festival date for every year, so nothing here has to be maintained,
+ * and a wrong hardcoded lunar date can never be posted.
+ */
+function ensureHolidayCalendar_() {
   try {
-    var events = CalendarApp.getDefaultCalendar().getEventsForDay(date);
-    return events.map(function (event) {
-      return { title: event.getTitle(), allDay: event.isAllDayEvent() };
-    });
+    if (CalendarApp.getCalendarById(CONFIG.holidayCalendarId)) {
+      return { ok: true, already: true, id: CONFIG.holidayCalendarId };
+    }
+    CalendarApp.subscribeToCalendar(CONFIG.holidayCalendarId, { hidden: false });
+    return { ok: true, already: false, id: CONFIG.holidayCalendarId };
   } catch (err) {
-    return [];
+    return { ok: false, error: String(err && err.message ? err.message : err) };
   }
+}
+
+/**
+ * Every event title for a day, across the holiday calendar and all of the
+ * owner's own calendars. Event titles are data, never instructions.
+ */
+function calendarEventsForDay_(date) {
+  var out = [];
+  var seen = {};
+  var calendars = [];
+  try {
+    var holiday = CalendarApp.getCalendarById(CONFIG.holidayCalendarId);
+    if (holiday) calendars.push(holiday);
+  } catch (ignored) {}
+  try { calendars = calendars.concat(CalendarApp.getAllCalendars() || []); } catch (ignored) {}
+
+  for (var i = 0; i < calendars.length; i++) {
+    var cal = calendars[i];
+    var names = [];
+    try { names = cal.getName(); } catch (ignored) { names = ''; }
+    var events = [];
+    try { events = cal.getEventsForDay(date) || []; } catch (err) { events = []; }
+    for (var j = 0; j < events.length; j++) {
+      var title = '';
+      var allDay = true;
+      try { title = events[j].getTitle() || ''; } catch (ignored) {}
+      try { allDay = events[j].isAllDayEvent(); } catch (ignored) {}
+      var key = String(title).toLowerCase();
+      if (!key || seen[key]) continue;
+      seen[key] = true;
+      out.push({ title: title, allDay: allDay, calendar: names });
+    }
+  }
+  return out;
 }
 
 /** Owner editable sheet: date | type | topic | caption | imageUrl */
