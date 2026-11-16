@@ -144,8 +144,10 @@ function makeSandbox(options) {
       ShapeType: { RECTANGLE: 'RECTANGLE', ROUND_RECTANGLE: 'ROUND_RECTANGLE' },
       ParagraphAlignment: { END: 'END' },
       create: () => ({
-        setPageWidth: () => {},
-        setPageHeight: () => {},
+        // Real Slides decks are 16:9 (720x405 pt) or 4:3; the service exposes
+        // only the getters, which is exactly what the card layout relies on.
+        getPageWidth: () => 720,
+        getPageHeight: () => 405,
         getSlides: () => [{
           getPageElements: () => [],
           getObjectId: () => 'page-1',
@@ -656,6 +658,20 @@ test('DISABLE_<CHANNEL> switches a configured channel off', () => {
   const { context } = makeSandbox({ props: { META_PAGE_ID: '1', META_PAGE_TOKEN: 't', DISABLE_FACEBOOK: 'yes' } });
   const names = vm.runInContext('adapters_', context)().map((a) => a.name);
   assert.ok(!names.includes('facebook'), names.join(','));
+});
+
+test('a broken slide export still leaves instagram with a real image', () => {
+  // Apps Script has no setPageWidth; this is the exact failure seen in the wild.
+  const { context } = makeSandbox({ props: { META_IG_ID: '178', META_PAGE_TOKEN: 'tok' } });
+  const post = vm.runInContext('buildDailyPost', context)(new Date());
+  const media = vm.runInContext('prepareMedia_', context)(post, [{ name: 'instagram', needsImage: true }]);
+  assert.ok(media.imageUrl, 'an image url must always be available');
+  assert.ok(media.imageUrl.startsWith('http'), media.imageUrl);
+});
+
+test('the card builder no longer calls a missing presentation setter', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'media.gs'), 'utf8');
+  assert.ok(!/\.setPageWidth|\.setPageHeight/.test(src), 'presentation.setPageWidth does not exist in Apps Script');
 });
 
 test('dryRun builds everything and publishes nothing', () => {

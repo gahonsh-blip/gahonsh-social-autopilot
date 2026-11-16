@@ -37,6 +37,9 @@ var CONFIG = {
 
   // Built by the free GitHub Action (ffmpeg + free TTS, no paid video API).
   videoManifestUrl: 'https://gahonsh-blip.github.io/social/daily.json',
+  // If the slide card cannot be built for any reason, this evergreen card is
+  // used instead so Instagram still gets a real image and the post goes out.
+  fallbackCardUrl: 'https://gahonsh-blip.github.io/social/media/card-default.jpg',
 
   // Google's own holiday calendar for India: every festival date, every year,
   // maintained by Google. No hardcoded lunar dates to get wrong.

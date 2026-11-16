@@ -122,9 +122,19 @@ function prepareMedia_(post, pending) {
   var video = { ok: false, skipped: true };
   if (needsVideo) video = fetchVideoManifest_();
 
+  var imageUrl = post.imageUrl || image.imageUrl || image.url || '';
+  if (!imageUrl) {
+    var fallbackCard = prop_('FALLBACK_CARD_URL', CONFIG.fallbackCardUrl || '');
+    if (fallbackCard) {
+      imageUrl = fallbackCard;
+      image.fallback = true;
+      image.fallbackUrl = fallbackCard;
+    }
+  }
+
   return {
     image: image,
-    imageUrl: post.imageUrl || image.imageUrl || image.url || '',
+    imageUrl: imageUrl,
     video: video.ok ? video : null,
     videoStatus: video.ok ? 'ready' : (video.error || 'not requested')
   };

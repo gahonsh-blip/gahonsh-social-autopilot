@@ -101,75 +101,96 @@ function exportSlide_(presentationId, pageId, kind) {
  */
 function buildBrandImage(post) {
   var presentation = null;
+  var presentationId = '';
+  var pageId = '';
   try {
     presentation = SlidesApp.create('GAHONSH post ' + post.dateKey + ' ' + new Date().getTime());
-    presentation.setPageWidth(810);   // 1080 px at 96 dpi
-    presentation.setPageHeight(810);
+    presentationId = presentation.getId();
 
+    // Apps Script cannot resize a slide page (there is no setPageWidth), so the
+    // layout is written in fractions of the deck's own page size. The card then
+    // fills the slide edge to edge whether the deck is 16:9 or 4:3, and the
+    // export keeps that ratio - both are accepted by Instagram and Facebook.
+    var W = presentation.getPageWidth();
+    var H = presentation.getPageHeight();
     var slide = presentation.getSlides()[0];
+    pageId = slide.getObjectId();
     slide.getPageElements().forEach(function (element) { element.remove(); });
 
-    var width = 810;
-    var height = 810;
+    var px = function (f) { return f * W; };
+    var py = function (f) { return f * H; };
+    var accent = post.type === 'festival' ? BRAND.amber : BRAND.teal;
+    var paper = post.type === 'festival' ? '#FFF8EC' : BRAND.bg;
 
-    var bg = slide.insertShape(SlidesApp.ShapeType.RECTANGLE, 0, 0, width, height);
-    bg.getFill().setSolidFill(post.type === 'festival' ? '#FFF8EC' : BRAND.bg);
+    var bg = slide.insertShape(SlidesApp.ShapeType.RECTANGLE, 0, 0, W, H);
+    bg.getFill().setSolidFill(paper);
     bg.getBorder().setTransparent();
 
-    var bar = slide.insertShape(SlidesApp.ShapeType.RECTANGLE, 0, 0, width, 36);
-    bar.getFill().setSolidFill(post.type === 'festival' ? BRAND.amber : BRAND.teal);
+    var bar = slide.insertShape(SlidesApp.ShapeType.RECTANGLE, 0, 0, W, py(0.035));
+    bar.getFill().setSolidFill(accent);
     bar.getBorder().setTransparent();
 
-    var footer = slide.insertShape(SlidesApp.ShapeType.RECTANGLE, 0, height - 40, width, 40);
+    var footer = slide.insertShape(SlidesApp.ShapeType.RECTANGLE, 0, py(0.885), W, py(0.115));
     footer.getFill().setSolidFill(BRAND.navy);
     footer.getBorder().setTransparent();
 
-    var mark = slide.insertTextBox(CONFIG.brand, 45, 70, 500, 50);
+    var mark = slide.insertTextBox(CONFIG.brand, px(0.055), py(0.075), px(0.5), py(0.10));
     mark.getText().setText(CONFIG.brand);
-    mark.getText().getTextStyle().setFontSize(24).setBold(true).setForegroundColor(BRAND.teal).setFontFamily('Arial');
+    mark.getText().getTextStyle().setFontSize(px(0.075)).setBold(true)
+      .setForegroundColor(BRAND.teal).setFontFamily('Arial');
 
-    var dateText = slide.insertTextBox(post.dateKey, 560, 74, 205, 40);
+    var dateText = slide.insertTextBox(post.dateKey, px(0.60), py(0.085), px(0.34), py(0.07));
     dateText.getText().setText(post.dateKey);
-    dateText.getText().getTextStyle().setFontSize(12).setForegroundColor(BRAND.navy).setFontFamily('Arial');
+    dateText.getText().getTextStyle().setFontSize(px(0.028)).setForegroundColor(BRAND.navy).setFontFamily('Arial');
     dateText.getText().getParagraphStyle().setParagraphAlignment(SlidesApp.ParagraphAlignment.END);
 
-    var chipTop = 140;
+    var headlineTop = 0.235;
     if (post.occasion) {
-      var chip = slide.insertShape(SlidesApp.ShapeType.ROUND_RECTANGLE, 45, chipTop, Math.min(520, 30 + String(post.occasion).length * 9), 34);
+      var chipW = Math.min(px(0.62), px(0.16) + String(post.occasion).length * px(0.014));
+      var chip = slide.insertShape(SlidesApp.ShapeType.ROUND_RECTANGLE, px(0.055), py(0.155), chipW, py(0.075));
       chip.getFill().setSolidFill(BRAND.amber);
       chip.getBorder().setTransparent();
       chip.getText().setText(String(post.occasion).toUpperCase());
-      chip.getText().getTextStyle().setFontSize(11).setBold(true).setForegroundColor('#FFFFFF').setFontFamily('Arial');
-      chipTop += 54;
+      chip.getText().getTextStyle().setFontSize(px(0.024)).setBold(true)
+        .setForegroundColor('#FFFFFF').setFontFamily('Arial');
+      headlineTop = 0.30;
     }
 
-    var headline = slide.insertTextBox(post.headline, 45, chipTop + 14, 720, 240);
+    var headline = slide.insertTextBox(post.headline, px(0.055), py(headlineTop), px(0.89), py(0.34));
     headline.getText().setText(post.headline);
-    var size = post.headline.length > 90 ? 26 : post.headline.length > 60 ? 32 : post.headline.length > 40 ? 38 : 44;
-    headline.getText().getTextStyle().setFontSize(size).setBold(true).setForegroundColor(BRAND.ink).setFontFamily('Arial');
+    var len = String(post.headline || '').length;
+    var size = len > 90 ? 0.040 : len > 60 ? 0.048 : len > 40 ? 0.055 : 0.062;
+    headline.getText().getTextStyle().setFontSize(px(size)).setBold(true)
+      .setForegroundColor(BRAND.ink).setFontFamily('Arial');
 
-    var rule = slide.insertShape(SlidesApp.ShapeType.RECTANGLE, 45, chipTop + 268, 120, 5);
+    var rule = slide.insertShape(SlidesApp.ShapeType.RECTANGLE, px(0.055), py(0.655), px(0.15), py(0.012));
     rule.getFill().setSolidFill(BRAND.amber);
     rule.getBorder().setTransparent();
 
-    var proof = slide.insertTextBox(CONFIG.tagline, 45, chipTop + 292, 720, 70);
+    var proof = slide.insertTextBox(CONFIG.tagline, px(0.055), py(0.70), px(0.89), py(0.12));
     proof.getText().setText(CONFIG.tagline);
-    proof.getText().getTextStyle().setFontSize(16).setForegroundColor(BRAND.navy).setFontFamily('Arial');
+    proof.getText().getTextStyle().setFontSize(px(0.036)).setForegroundColor(BRAND.navy).setFontFamily('Arial');
 
-    var site = slide.insertTextBox(CONFIG.website.replace('https://', ''), 45, height - 132, 500, 44);
+    var site = slide.insertTextBox(CONFIG.website.replace('https://', ''), px(0.055), py(0.898), px(0.60), py(0.05));
     site.getText().setText(CONFIG.website.replace('https://', ''));
-    site.getText().getTextStyle().setFontSize(20).setBold(true).setForegroundColor(BRAND.teal).setFontFamily('Arial');
+    site.getText().getTextStyle().setFontSize(px(0.042)).setBold(true)
+      .setForegroundColor('#FFFFFF').setFontFamily('Arial');
 
-    var cta = slide.insertTextBox('Websites  •  Web apps  •  APIs  •  Dashboards', 45, height - 92, 720, 34);
-    cta.getText().setText('Websites  •  Web apps  •  APIs  •  Dashboards');
-    cta.getText().getTextStyle().setFontSize(12).setForegroundColor(BRAND.navy).setFontFamily('Arial');
+    var cta = slide.insertTextBox('Websites  .  Web apps  .  APIs  .  Dashboards', px(0.055), py(0.945), px(0.89), py(0.04));
+    cta.getText().setText('Websites  .  Web apps  .  APIs  .  Dashboards');
+    cta.getText().getTextStyle().setFontSize(px(0.026)).setForegroundColor('#DCE5E2').setFontFamily('Arial');
 
     presentation.saveAndClose();
 
-    var pageId = slide.getObjectId();
-    var pngBlob = exportSlide_(presentation.getId(), pageId, 'png');
+    var pngBlob = exportSlide_(presentationId, pageId, 'png');
     var jpegBlob = null;
-    try { jpegBlob = exportSlide_(presentation.getId(), pageId, 'jpeg'); } catch (err) { jpegBlob = pngBlob; }
+    var jpegIsReal = false;
+    try {
+      jpegBlob = exportSlide_(presentationId, pageId, 'jpeg');
+      jpegIsReal = String(jpegBlob.getContentType()).indexOf('jpeg') !== -1 || String(jpegBlob.getContentType()).indexOf('jpg') !== -1;
+    } catch (err) {
+      jpegBlob = pngBlob;
+    }
 
     var hostError = '';
     var pngUrl = '';
@@ -178,7 +199,8 @@ function buildBrandImage(post) {
     if (ghToken_()) {
       try {
         pngUrl = hostOnPages_(pngBlob.setName('gahonsh-' + post.dateKey + '.png'), 'gahonsh-' + post.dateKey + '.png', 'image/png');
-        jpegUrl = hostOnPages_(jpegBlob.setName('gahonsh-' + post.dateKey + '.jpg'), 'gahonsh-' + post.dateKey + '.jpg', 'image/jpeg');
+        var name = jpegIsReal ? 'gahonsh-' + post.dateKey + '.jpg' : 'gahonsh-' + post.dateKey + '.png';
+        jpegUrl = hostOnPages_(jpegBlob.setName(name), name, jpegIsReal ? 'image/jpeg' : 'image/png');
         waitForPublicUrl_(jpegUrl, 8, 10000);
       } catch (err) {
         hostError = String(err && err.message ? err.message : err);
@@ -201,15 +223,15 @@ function buildBrandImage(post) {
     return {
       ok: !!jpegUrl,
       url: pngUrl || jpegUrl,
-      imageUrl: jpegUrl,   // Instagram requires JPEG
+      imageUrl: jpegUrl,
       fileId: fileId,
       warning: hostError
     };
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) };
   } finally {
-    if (presentation) {
-      try { DriveApp.getFileById(presentation.getId()).setTrashed(true); } catch (ignored) {}
+    if (presentationId) {
+      try { DriveApp.getFileById(presentationId).setTrashed(true); } catch (ignored) {}
     }
   }
 }
