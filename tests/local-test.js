@@ -60,6 +60,7 @@ function makeSandbox(options) {
   };
   const spreadsheet = {
     id: 'sheet-1',
+    getId: () => 'sheet-1',
     getUrl: () => 'https://docs.google.com/spreadsheets/d/sheet-1',
     getSheetByName: (name) => (name === 'PostLog' ? sheet : null),
     insertSheet: () => sheet,
@@ -180,7 +181,7 @@ function makeSandbox(options) {
     const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
     vm.runInContext(code, context, { filename: file });
   });
-  return { context, httpLog, props, sandbox };
+  return { context, httpLog, props, sandbox, logRows: sheet.rows };
 }
 
 let passed = 0;
@@ -696,6 +697,17 @@ test('resetToday clears the marks so a channel can be retried', () => {
   assert.ok(!Object.keys(props).some((k) => k.startsWith('done_')));
 });
 
+test('a crash before the channel loop is reported and logged, not thrown', () => {
+  const { context, logRows } = makeSandbox({ props: { PUBLISH_IMAGE: 'no' } });
+  vm.runInContext('buildDailyPost = function () { throw new Error("topic bank exploded"); };', context);
+  const res = vm.runInContext('runDailyPost', context)();
+  assert.strictEqual(res.ok, false, JSON.stringify(res));
+  assert.ok(/topic bank exploded/.test(res.error), res.error);
+  const crashed = logRows.filter((row) => row[3] === 'crashed');
+  assert.strictEqual(crashed.length, 1, 'the crash must reach the log sheet');
+  assert.ok(/run aborted/.test(crashed[0][6]), String(crashed[0][6]));
+});
+
 /* ------------------------------------------------------------------ *
  * 7. Setup report                                                    *
  * ------------------------------------------------------------------ */
@@ -709,6 +721,33 @@ test('channelMatrix is honest about what is on and what is missing', () => {
   assert.strictEqual(by.telegram.ready, false);
   assert.ok(by.telegram.needs.join(' ').includes('TELEGRAM_BOT_TOKEN'));
   assert.strictEqual(by.blogger.ready, true);
+});
+
+test('channelMatrix admits when the YouTube service is missing', () => {
+  const { context } = makeSandbox({ props: { META_PAGE_ID: '1', META_PAGE_TOKEN: 't' } });
+  const rows = vm.runInContext('channelMatrix', context)();
+  const yt = rows.find((r) => r.channel === 'youtube');
+  assert.strictEqual(yt.ready, false, JSON.stringify(yt));
+  assert.ok(/YouTube Data API v3/.test(yt.status), yt.status);
+});
+
+test('channelMatrix marks YouTube ready when the service is added', () => {
+  const { context } = makeSandbox({ youtube: { Videos: { insert: () => ({}), list: () => ({}) } } });
+  const yt = vm.runInContext('channelMatrix', context)().find((r) => r.channel === 'youtube');
+  assert.strictEqual(yt.ready, true, JSON.stringify(yt));
+  assert.strictEqual(yt.status, 'on');
+});
+
+test('blogger says what to do when the scope is missing', () => {
+  const { context } = makeSandbox({
+    props: { BLOGGER_BLOG_ID: '1' },
+    http: () => ({ code: 403, text: '{"error":{"message":"insufficientPermissions"}}' }),
+  });
+  const post = vm.runInContext('buildDailyPost', context)(new Date());
+  const res = vm.runInContext('publishBlogger_', context)(post, 'https://img/x.jpg');
+  assert.strictEqual(res.ok, false);
+  assert.ok(/scope is not granted/.test(res.error), res.error);
+  assert.ok(/appsscript\.json|Authorize/.test(res.error), res.error);
 });
 
 const total = passed + failures.length;

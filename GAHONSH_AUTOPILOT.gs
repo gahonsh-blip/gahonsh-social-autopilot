@@ -914,23 +914,6 @@ function instagramAlreadyPosted_(igId, token, post) {
 // Blogger
 // ---------------------------------------------------------------------------
 
-/**
- * Static OAuth scope activation.
- *
- * Apps Script decides which scopes to ask the owner for by scanning the project
- * for API usage. The Blogger publisher below talks to the REST API through
- * UrlFetchApp, which only asks for script.external_request, so the blogger scope
- * would never be granted and the access token could not create a post.
- * Referencing BloggerApp anywhere in the project makes Apps Script request
- * https://www.googleapis.com/auth/blogger. The branch below never executes.
- */
-function bloggerScopeProbe_() {
-  if (false) {
-    BloggerApp.getBlogs();
-  }
-  return true;
-}
-
 function publishBlogger_(post, imageUrl) {
   var blogId = prop_('BLOGGER_BLOG_ID', CONFIG.defaultBlogId || '');
   if (!blogId) return { channel: 'blogger', ok: false, skipped: true, error: 'missing BLOGGER_BLOG_ID' };
@@ -952,6 +935,17 @@ function publishBlogger_(post, imageUrl) {
     if (code >= 200 && code < 300) {
       var data = JSON.parse(response.getContentText());
       return { channel: 'blogger', ok: true, id: data.id, url: data.url };
+    }
+    // Apps Script cannot request a scope from code, so a missing blogger scope
+    // only shows up as a 403 here. Say what to do instead of printing the body.
+    if (code === 401 || code === 403) {
+      return {
+        channel: 'blogger',
+        ok: false,
+        error: 'http_' + code + ': the blogger scope is not granted. Paste appsscript.json ' +
+          '(Project Settings -> "Show appsscript.json in editor") or run any function once and press ' +
+          'Authorize, then retry. ' + response.getContentText().slice(0, 120)
+      };
     }
     return { channel: 'blogger', ok: false, error: 'http_' + code + ': ' + response.getContentText().slice(0, 160) };
   } catch (err) {
@@ -1417,11 +1411,21 @@ function publishYouTube_(post, imageUrl, media) {
 // Channel registry
 // ---------------------------------------------------------------------------
 
+/** The YouTube Data API v3 advanced service, if the owner added it. */
+function hasYouTubeService_() {
+  return typeof YouTube !== 'undefined' && !!YouTube.Videos;
+}
+
 /** Every channel, whether it can run right now, and what it still needs. */
 function channelMatrix() {
   var rows = [
-    { name: 'blogger', enabled: true, needs: ['BLOGGER_BLOG_ID (optional, falls back to the built-in blog)'] },
-    { name: 'youtube', enabled: true, needs: ['Services (+) -> YouTube Data API v3', 'fresh entry in the video manifest'] },
+    { name: 'blogger', enabled: true, needs: ['blogger OAuth scope (paste appsscript.json or Authorize once)'] },
+    {
+      name: 'youtube',
+      enabled: hasYouTubeService_(),
+      needs: ['Services (+) -> YouTube Data API v3', 'fresh entry in the video manifest'],
+      why: 'needs the YouTube Data API v3 service'
+    },
     { name: 'telegram', enabled: hasTelegram_(), needs: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'] },
     { name: 'facebook', enabled: hasFacebook_(), needs: ['META_PAGE_ID', 'META_PAGE_TOKEN'] },
     { name: 'instagram', enabled: hasInstagram_(), needs: ['META_IG_ID', 'META_PAGE_TOKEN'] },
@@ -1433,12 +1437,15 @@ function channelMatrix() {
   ];
   return rows.map(function (row) {
     var off = channelDisabled_(row.name);
+    var on = row.enabled && !off;
     return {
       channel: row.name,
-      enabled: row.enabled && !off,
-      ready: row.enabled && !off,
+      enabled: on,
+      ready: on,
       needs: off ? [] : row.needs,
-      status: off ? 'switched off (DISABLE_' + row.name.toUpperCase() + '=yes)' : (row.enabled ? 'on' : 'waiting for keys')
+      status: off
+        ? 'switched off (DISABLE_' + row.name.toUpperCase() + '=yes)'
+        : (on ? 'on' : (row.why || 'waiting for keys'))
     };
   });
 }
@@ -1748,6 +1755,26 @@ function runDailyPost(options) {
       channelsOk: okChannels,
       channelsFailed: results.filter(function (r) { return !r.ok; }).map(function (r) { return r.channel; }),
       results: results
+    };
+  } catch (err) {
+    // Without this, a throw before the channel loop (topic build, properties,
+    // sheet) aborts the whole run and leaves no trace in the log sheet.
+    var failure = String(err && err.message ? err.message : err);
+    var failedKey = dateKey_(new Date());
+    logRow_({
+      dateKey: failedKey,
+      channel: 'SUMMARY',
+      status: 'crashed',
+      headline: '',
+      idOrUrl: '',
+      detail: 'run aborted before any channel: ' + failure
+    });
+    return {
+      ok: false,
+      error: failure,
+      dateKey: failedKey,
+      channelsOk: [],
+      channelsFailed: CHANNELS.slice()
     };
   } finally {
     try { lock.releaseLock(); } catch (ignored) {}

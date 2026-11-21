@@ -43,7 +43,7 @@ Properties, run `setupAll()` once.
 
 ```
 npm run check     # every .gs file parses
-npm test          # 38 mock tests, Google services stubbed
+npm test          # 42 mock tests, Google services stubbed
 ```
 
 The suite proves the parts that actually break: festival detection, the link on
