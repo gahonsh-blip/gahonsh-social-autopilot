@@ -17,7 +17,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+      - name: Check the sources exist
+        run: |
+          for f in config.gs calendar.gs content.gs media.gs publishers.gs code.gs; do
+            test -f "$f" || { echo "missing source file: $f"; exit 1; }
+          done
       - name: Render today's post
         run: node render-today.js
       - name: Commit the page

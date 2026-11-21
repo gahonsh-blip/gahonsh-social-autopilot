@@ -9,7 +9,16 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const FILES = ['config.gs', 'calendar.gs', 'content.gs', 'image.gs', 'publishers.gs', 'Code.gs'];
+const FILES = ['config.gs', 'calendar.gs', 'content.gs', 'media.gs', 'publishers.gs', 'code.gs'];
+
+// GitHub's Linux runners are case-sensitive, so a stale image.gs / Code.gs entry
+// here fails the whole job with a bare ENOENT. Fail early and name the file.
+const missing = FILES.filter((f) => !fs.existsSync(path.join(__dirname, f)));
+if (missing.length) {
+  console.error('Missing source files: ' + missing.join(', '));
+  process.exit(1);
+}
+
 const sandbox = {
   console, JSON, Date, Math, Object, String, Number, Array, RegExp, parseInt, isNaN, encodeURIComponent,
   Logger: { log: () => {} },

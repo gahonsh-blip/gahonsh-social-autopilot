@@ -479,16 +479,18 @@ test('an already posted headline on the page is not posted twice', () => {
   const today = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${today.getUTCFullYear()}-${pad(today.getUTCMonth() + 1)}-${pad(today.getUTCDate())}T04:00:00+0000`;
+  let pageMessage = '';
   const { context } = makeSandbox({
     props: { META_PAGE_ID: '824', META_PAGE_TOKEN: 'tok' },
     http: (url) => {
       if (url.includes('/posts?')) {
-        return { code: 200, text: JSON.stringify({ data: [{ id: '824_9', created_time: stamp, message: 'Flutter apps for Android and iOS from one codebase\n\nmore' }] }) };
+        return { code: 200, text: JSON.stringify({ data: [{ id: '824_9', created_time: stamp, message: pageMessage }] }) };
       }
       return { code: 200, text: '{"id":"new"}' };
     },
   });
   const post = vm.runInContext('buildDailyPost', context)(new Date());
+  pageMessage = post.headline + '\n\nmore';
   const res = vm.runInContext('publishFacebook_', context)(post, 'https://img/x.jpg');
   assert.strictEqual(res.skipped, true, JSON.stringify(res));
   assert.ok(/already posted today/.test(res.note), res.note);
