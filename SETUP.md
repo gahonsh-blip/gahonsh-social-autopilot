@@ -37,18 +37,50 @@ off without deleting anything. Nothing has to be configured twice.
 
 1. Open `script.google.com` -> **New project**, name it `GAHONSH Social`.
 2. Delete the sample code. Paste the whole `GAHONSH_AUTOPILOT.gs` file into `Code.gs`.
-3. Left sidebar **Services (+)** -> **YouTube Data API v3** -> **Add**.
-4. **Project Settings** -> Time zone: `(GMT+05:30) India Standard Time`.
-5. **Project Settings -> Script properties**: add the keys from your channel list
+3. Paste the manifest: **Project Settings** -> tick **Show "appsscript.json" in editor**,
+   open the `appsscript.json` tab, and replace its contents with this repo's
+   `appsscript.json`. This is what requests the Blogger, Slides, Drive, Sheets,
+   Calendar and YouTube upload scopes. Skipping this step is the most common reason
+   a channel fails with `http_403`.
+4. Left sidebar **Services (+)** -> **YouTube Data API v3** -> **Add**.
+5. **Project Settings** -> Time zone: `(GMT+05:30) India Standard Time`.
+6. **Project Settings -> Script properties**: add the keys from your channel list
    (or paste the private `keys.gs` file and run `applyKeys()` once, then delete it).
-6. Select the function **setupAll** and press **Run**. Approve the Google prompt.
+7. Select the function **setupAll** and press **Run**. Approve the Google prompt.
    This subscribes the Indian holiday calendar, creates the log sheet and installs the
    daily 08:30 trigger.
-7. Select **dryRun** and press **Run** in the editor. It builds everything and publishes
+8. Select **dryRun** and press **Run** in the editor. It builds everything and publishes
    nothing - you get the exact preview per channel plus the card URL.
-8. Optional, once: run **testAllChannels** for a clearly marked test post everywhere.
+9. Optional, once: run **testAllChannels** for a clearly marked test post everywhere.
 
 From then on it posts by itself at 08:30 IST, every day, festival-aware.
+
+## After an update: authorize again
+
+Pasting a new `GAHONSH_AUTOPILOT.gs` that uses a scope the project did not use before
+makes every run fail with `Authorization is required to perform that action` until the
+owner approves it once. The daily trigger cannot show a prompt, so it just fails quietly
+in **Executions**.
+
+After every update:
+
+1. Open the editor and pick any function (for example `channelCheck`).
+2. Press **Run** and approve the prompt.
+3. Run `dryRun()` to confirm all channels are happy.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Nothing posted, sheet has no rows at all | **Executions** page: a failed run means the script could not start (usually authorization) |
+| Sheet row with status `crashed` | The run died before any channel; `detail` holds the error |
+| Blogger row `http_403: the blogger scope is not granted` | Paste `appsscript.json`, then authorize again (see above) |
+| YouTube row `advanced service not added` | **Services (+)** -> **YouTube Data API v3** -> **Add** |
+| Instagram `no public image url` | `GITHUB_TOKEN` missing, so the card never reached GitHub Pages |
+
+`channelCheck()` prints one row per channel with `ready` and the keys it still needs;
+`youtube` now reports `needs the YouTube Data API v3 service` instead of pretending to
+be ready.
 
 ## Health and repair
 

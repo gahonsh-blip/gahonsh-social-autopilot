@@ -23,6 +23,8 @@ jobs:
           for f in config.gs calendar.gs content.gs media.gs publishers.gs code.gs; do
             test -f "$f" || { echo "missing source file: $f"; exit 1; }
           done
+      - name: Run the mock tests
+        run: npm test
       - name: Render today's post
         run: node render-today.js
       - name: Commit the page

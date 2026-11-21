@@ -242,6 +242,26 @@ function runDailyPost(options) {
       channelsFailed: results.filter(function (r) { return !r.ok; }).map(function (r) { return r.channel; }),
       results: results
     };
+  } catch (err) {
+    // Without this, a throw before the channel loop (topic build, properties,
+    // sheet) aborts the whole run and leaves no trace in the log sheet.
+    var failure = String(err && err.message ? err.message : err);
+    var failedKey = dateKey_(new Date());
+    logRow_({
+      dateKey: failedKey,
+      channel: 'SUMMARY',
+      status: 'crashed',
+      headline: '',
+      idOrUrl: '',
+      detail: 'run aborted before any channel: ' + failure
+    });
+    return {
+      ok: false,
+      error: failure,
+      dateKey: failedKey,
+      channelsOk: [],
+      channelsFailed: CHANNELS.slice()
+    };
   } finally {
     try { lock.releaseLock(); } catch (ignored) {}
   }
