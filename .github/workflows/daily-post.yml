@@ -10,9 +10,16 @@ on:
 permissions:
   contents: write
 
+# A manual run and the cron run can overlap; two pushes would fight over the
+# same branch. Queue them instead of cancelling, so today's page is never lost.
+concurrency:
+  group: daily-post-preview
+  cancel-in-progress: false
+
 jobs:
   render:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,4 +40,10 @@ jobs:
           git config user.email "gahonsh@gmail.com"
           git add docs
           git diff --staged --quiet || git commit -m "post: $(date -u +%Y-%m-%d) preview"
-          git push
+          # A human push can land between checkout and here; rebase once instead of failing.
+          for attempt in 1 2 3; do
+            git push && break
+            echo "push rejected, rebasing (attempt $attempt)"
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+            sleep 5
+          done

@@ -45,8 +45,25 @@ var CONFIG = {
   // maintained by Google. No hardcoded lunar dates to get wrong.
   holidayCalendarId: 'en.indian#holiday@group.v.calendar.google.com',
 
+  // Meta retires a Graph API version about two years after release (v20.0 stopped
+  // answering on 2026-09-24). LinkedIn retires each marketing version after one
+  // year. Both defaults can be overridden from Script Properties, so a sunset is
+  // a property change, not a code change.
+  metaGraphVersion: 'v25.0',
+  linkedinVersion: '202611',
+
   limits: { x: 275, bluesky: 290, mastodon: 480, telegram: 1000, instagram: 2100, linkedin: 2900, facebook: 5000 }
 };
+
+/** Base URL for a Graph API path, on the configured version. */
+function graphUrl_(path) {
+  return 'https://graph.facebook.com/' + prop_('META_GRAPH_VERSION', CONFIG.metaGraphVersion) + '/' + path;
+}
+
+/** LinkedIn marketing version header value. */
+function linkedinVersion_() {
+  return prop_('LINKEDIN_VERSION', CONFIG.linkedinVersion);
+}
 
 /** Read a Script Property with a default. */
 function prop_(key, fallback) {

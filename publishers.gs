@@ -46,7 +46,7 @@ function fullText_(post) {
 
 function graphGet_(path) {
   try {
-    var res = UrlFetchApp.fetch('https://graph.facebook.com/v20.0/' + path, { muteHttpExceptions: true, followRedirects: true });
+    var res = UrlFetchApp.fetch(graphUrl_(path), { muteHttpExceptions: true, followRedirects: true });
     if (res.getResponseCode() !== 200) return null;
     return JSON.parse(res.getContentText());
   } catch (err) {
@@ -341,8 +341,8 @@ function publishFacebook_(post, imageUrl) {
   if (alreadyFb) return { channel: 'facebook', ok: true, skipped: true, id: alreadyFb, note: 'already posted today on the page' };
   try {
     var endpoint = imageUrl
-      ? 'https://graph.facebook.com/v20.0/' + pageId + '/photos'
-      : 'https://graph.facebook.com/v20.0/' + pageId + '/feed';
+      ? graphUrl_(pageId + '/photos')
+      : graphUrl_(pageId + '/feed');
     var payload = imageUrl
       ? { url: imageUrl, caption: fullText_(post), access_token: token }
       : { message: fullText_(post), link: CONFIG.website, access_token: token };
@@ -370,7 +370,7 @@ function publishInstagram_(post, imageUrl) {
   var alreadyIg = instagramAlreadyPosted_(igId, token, post);
   if (alreadyIg) return { channel: 'instagram', ok: true, skipped: true, id: alreadyIg, note: 'already posted today on instagram' };
   try {
-    var create = UrlFetchApp.fetch('https://graph.facebook.com/v20.0/' + igId + '/media', {
+    var create = UrlFetchApp.fetch(graphUrl_(igId + '/media'), {
       method: 'post',
       payload: { image_url: imageUrl, caption: fullText_(post), access_token: token },
       muteHttpExceptions: true
@@ -379,7 +379,7 @@ function publishInstagram_(post, imageUrl) {
       return { channel: 'instagram', ok: false, error: 'container_http_' + create.getResponseCode() + ': ' + create.getContentText().slice(0, 120) };
     }
     var creationId = JSON.parse(create.getContentText()).id;
-    var publish = UrlFetchApp.fetch('https://graph.facebook.com/v20.0/' + igId + '/media_publish', {
+    var publish = UrlFetchApp.fetch(graphUrl_(igId + '/media_publish'), {
       method: 'post',
       payload: { creation_id: creationId, access_token: token },
       muteHttpExceptions: true
@@ -403,7 +403,7 @@ function publishLinkedIn_(post, imageUrl) {
   if (!token || !author) return { channel: 'linkedin', ok: false, skipped: true, error: 'missing linkedin token or author urn' };
   var headers = {
     Authorization: 'Bearer ' + token,
-    'LinkedIn-Version': prop_('LINKEDIN_VERSION', '202405'),
+    'LinkedIn-Version': linkedinVersion_(),
     'X-Restli-Protocol-Version': '2.0.0'
   };
   var modern = {
@@ -637,10 +637,13 @@ function adapters_() {
     { name: 'instagram', enabled: hasInstagram_(), run: publishInstagram_, needsImage: true },
     { name: 'linkedin', enabled: hasLinkedIn_(), run: publishLinkedIn_, needsImage: false },
     { name: 'x', enabled: hasX_(), run: publishX_, needsImage: false },
-    { name: 'youtube', enabled: true, run: publishYouTube_, needsImage: false, needsVideo: true },
     { name: 'bluesky', enabled: hasBluesky_(), run: publishBluesky_, needsImage: false },
     { name: 'mastodon', enabled: hasMastodon_(), run: publishMastodon_, needsImage: false },
-    { name: 'devto', enabled: hasDevTo_(), run: publishDevTo_, needsImage: false }
+    { name: 'devto', enabled: hasDevTo_(), run: publishDevTo_, needsImage: false },
+    // Last on purpose: downloading and uploading a video is the slowest step and
+    // the one most likely to hit the 6 minute Apps Script execution limit. If the
+    // run is cut short, only YouTube is lost, not the text channels.
+    { name: 'youtube', enabled: true, run: publishYouTube_, needsImage: false, needsVideo: true }
   ];
   return all.filter(function (adapter) { return adapter.enabled && !channelDisabled_(adapter.name); });
 }

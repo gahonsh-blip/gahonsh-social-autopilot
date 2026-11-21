@@ -82,10 +82,30 @@ After every update:
 `youtube` now reports `needs the YouTube Data API v3 service` instead of pretending to
 be ready.
 
+## What expires
+
+Every one of these fails silently at 08:30, so check them when posting stops.
+`tokenHealth()` tests the four that are cheap to test and prints one line per service.
+
+| Thing | Lifetime | Fix | Symptom when it lapses |
+|---|---|---|---|
+| Meta Graph API version | ~2 years (v20.0 ended 2026-09-24) | set `META_GRAPH_VERSION` (default `v25.0`, good to 2028) | Facebook and Instagram fail, error mentions an unsupported version |
+| LinkedIn API version | 1 year (latest `202611`) | set `LINKEDIN_VERSION` | LinkedIn fails with 400/426 |
+| Meta page token | ~60 days for a long-lived user token | generate a new one, update `META_PAGE_TOKEN` | Facebook and Instagram return `190` |
+| LinkedIn access token | ~60 days | update `LINKEDIN_ACCESS_TOKEN` | LinkedIn returns `401` |
+| GitHub token | whatever you chose at creation | regenerate, update `GITHUB_TOKEN` | the card is not hosted, so Instagram has no image |
+| X free tier | monthly cap | nothing to fix, it resets | X returns `429` |
+| Apps Script execution | 6 minutes per run | keep the run lean | the run is killed mid-way, which is why YouTube runs last |
+| GitHub scheduled workflow | disabled after 60 days with no repository activity | push anything, or re-enable it in the Actions tab | the preview page stops updating |
+
+Versions are Script Properties on purpose: when Meta or LinkedIn retires a version,
+change the property instead of waiting for a code release.
+
 ## Health and repair
 
 ```
 channelCheck()   what is on, what is still waiting for a key
+tokenHealth()    are the expiring tokens still valid (one GET per service)
 dryRun()         today's preview, publishes nothing
 runDailyPost()   post now (skips channels already done today)
 resetToday()     clear today's marks so failed channels retry
