@@ -43,13 +43,27 @@ Properties, run `setupAll()` once.
 
 ```
 npm run check     # every .gs file parses
-npm test          # 36 mock tests, Google services stubbed
+npm test          # 38 mock tests, Google services stubbed
 ```
 
 The suite proves the parts that actually break: festival detection, the link on
 every post, per-channel idempotency, failure isolation, the Instagram
 container-then-publish order, YouTube privacy verification, the media host
 updating an existing file, X OAuth 1.0a signing, and that `dryRun()` posts nothing.
+
+## Daily preview workflow
+
+`.github/workflows/daily-post.yml` renders today's real post into `docs/` at
+03:00 UTC (08:30 IST) and commits the page, so `docs/today.html` always shows
+what the Apps Script will publish. It needs no secrets.
+
+Trigger it by hand from **Actions -> Daily post preview -> Run workflow** (the
+`workflow_dispatch:` trigger), or re-run any failed run from the Actions tab.
+
+Keep the source list in `render-today.js` in sync with the files on disk. Linux
+runners are case-sensitive: `media.gs` and `code.gs` are lowercase in this repo,
+so `image.gs` or `Code.gs` fails the job with `ENOENT`. The workflow now checks
+for every source file before rendering and fails with the missing name instead.
 
 ## Why not just a "free AI video API"
 
