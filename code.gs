@@ -4,6 +4,7 @@
  * Run these from the Apps Script editor:
  *   setupAll()          one-time setup: holiday calendar + daily trigger + log sheet
  *   channelCheck()      what is on, what is waiting for a key (publishes nothing)
+ *   tokenHealth()       are the expiring tokens still valid (one GET per service)
  *   dryRun()            builds today's post, card and video links, publishes nothing
  *   runDailyPost()      publishes today's post everywhere, exactly once per channel
  *   testAllChannels()   one clearly marked test post to every configured channel
@@ -23,6 +24,30 @@ function triesKey_(dateKey, channel) {
 /** Kept for older installs that only used the day level marker. */
 function postedKey_(key) {
   return 'posted_' + key;
+}
+
+/**
+ * Drop per-day markers older than STATE_KEEP_DAYS.
+ *
+ * Script Properties hold 500 KB for the whole project. Ten channels a day write
+ * three keys each, so the quota fills in a few years and then every setProperty
+ * throws - the daily run dies with no obvious cause. Keeping a month of history
+ * is enough for resetToday and for reading yesterday's status.
+ */
+function pruneStateKeys_(props, keepDays) {
+  var keep = Number(keepDays || prop_('STATE_KEEP_DAYS', '30'));
+  var cutoff = dateKey_(new Date(new Date().getTime() - keep * 86400000));
+  var removed = 0;
+  var all = props.getProperties();
+  Object.keys(all).forEach(function (name) {
+    var match = name.match(/^(?:done|tries)_(\d{4}-\d{2}-\d{2})_/) || name.match(/^posted_(\d{4}-\d{2}-\d{2})$/);
+    if (!match) return;
+    if (match[1] < cutoff) {
+      props.deleteProperty(name);
+      removed++;
+    }
+  });
+  return removed;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,10 +88,97 @@ function setupAll() {
   return report;
 }
 
+/**
+ * Check the credentials that expire without warning.
+ *
+ * Meta long-lived tokens last about 60 days, LinkedIn tokens 60 days, GitHub
+ * personal access tokens expire on their own schedule, and a revoked bot token
+ * simply stops working. None of that shows up until the 08:30 run, so this
+ * function answers "is today going to work?" with one cheap GET per service.
+ */
+function tokenHealth() {
+  var checks = [];
+
+  function probe(channel, fn) {
+    try {
+      checks.push(fn());
+    } catch (err) {
+      checks.push({ channel: channel, ok: false, detail: String(err && err.message ? err.message : err) });
+    }
+  }
+
+  probe('github', function () {
+    var token = ghToken_();
+    if (!token) return { channel: 'github', ok: false, detail: 'missing GITHUB_TOKEN (the card cannot be hosted)' };
+    var repo = CONFIG.mediaRepo;
+    var res = UrlFetchApp.fetch('https://api.github.com/repos/' + repo.owner + '/' + repo.repo, {
+      headers: { Authorization: 'Bearer ' + token, 'User-Agent': 'gahonsh-autopilot', Accept: 'application/vnd.github+json' },
+      muteHttpExceptions: true
+    });
+    var code = res.getResponseCode();
+    return {
+      channel: 'github',
+      ok: code === 200,
+      detail: code === 200 ? 'token works' : 'http_' + code + ' - regenerate the token, media hosting is down'
+    };
+  });
+
+  probe('meta', function () {
+    var token = propAny_(['META_PAGE_TOKEN', 'FACEBOOK_PAGE_ACCESS_TOKEN']);
+    if (!token) return { channel: 'meta', ok: false, detail: 'missing META_PAGE_TOKEN' };
+    var res = UrlFetchApp.fetch(graphUrl_('me?fields=id,name'), {
+      headers: { Authorization: 'Bearer ' + token },
+      muteHttpExceptions: true
+    });
+    var code = res.getResponseCode();
+    return {
+      channel: 'meta',
+      ok: code === 200,
+      detail: code === 200 ? 'page token works' : 'http_' + code + ' - long-lived tokens last about 60 days, generate a new one'
+    };
+  });
+
+  probe('linkedin', function () {
+    var token = prop_('LINKEDIN_ACCESS_TOKEN');
+    if (!token) return { channel: 'linkedin', ok: false, detail: 'missing LINKEDIN_ACCESS_TOKEN' };
+    var res = UrlFetchApp.fetch('https://api.linkedin.com/v2/userinfo', {
+      headers: { Authorization: 'Bearer ' + token, 'LinkedIn-Version': linkedinVersion_() },
+      muteHttpExceptions: true
+    });
+    var code = res.getResponseCode();
+    return {
+      channel: 'linkedin',
+      ok: code === 200,
+      detail: code === 200 ? 'token works' : 'http_' + code + ' - token expired or version ' + linkedinVersion_() + ' sunset'
+    };
+  });
+
+  probe('telegram', function () {
+    var token = prop_('TELEGRAM_BOT_TOKEN');
+    if (!token) return { channel: 'telegram', ok: false, detail: 'missing TELEGRAM_BOT_TOKEN' };
+    var res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/getMe', { muteHttpExceptions: true });
+    var code = res.getResponseCode();
+    return { channel: 'telegram', ok: code === 200, detail: code === 200 ? 'bot works' : 'http_' + code };
+  });
+
+  probe('youtube', function () {
+    var ready = hasYouTubeService_();
+    return {
+      channel: 'youtube',
+      ok: ready,
+      detail: ready ? 'service added' : 'Services (+) -> YouTube Data API v3'
+    };
+  });
+
+  var problems = checks.filter(function (c) { return !c.ok; }).map(function (c) { return c.channel + ': ' + c.detail; });
+  var report = { at: new Date().toISOString(), ok: problems.length === 0, checks: checks, problems: problems };
+  Logger.log(JSON.stringify(report, null, 2));
+  return report;
+}
+
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
-
 function getLogSheet_() {
   var props = PropertiesService.getScriptProperties();
   var sheetId = props.getProperty('POSTLOG_SHEET_ID');
@@ -225,6 +337,7 @@ function runDailyPost(options) {
     });
 
     props.setProperty(postedKey_(key), JSON.stringify({ at: now.toISOString(), channels: okChannels }));
+    try { pruneStateKeys_(props); } catch (ignored) {}
 
     var onlySkips = okChannels.length === 0;
     return {

@@ -55,8 +55,25 @@ var CONFIG = {
   // maintained by Google. No hardcoded lunar dates to get wrong.
   holidayCalendarId: 'en.indian#holiday@group.v.calendar.google.com',
 
+  // Meta retires a Graph API version about two years after release (v20.0 stopped
+  // answering on 2026-09-24). LinkedIn retires each marketing version after one
+  // year. Both defaults can be overridden from Script Properties, so a sunset is
+  // a property change, not a code change.
+  metaGraphVersion: 'v25.0',
+  linkedinVersion: '202611',
+
   limits: { x: 275, bluesky: 290, mastodon: 480, telegram: 1000, instagram: 2100, linkedin: 2900, facebook: 5000 }
 };
+
+/** Base URL for a Graph API path, on the configured version. */
+function graphUrl_(path) {
+  return 'https://graph.facebook.com/' + prop_('META_GRAPH_VERSION', CONFIG.metaGraphVersion) + '/' + path;
+}
+
+/** LinkedIn marketing version header value. */
+function linkedinVersion_() {
+  return prop_('LINKEDIN_VERSION', CONFIG.linkedinVersion);
+}
 
 /** Read a Script Property with a default. */
 function prop_(key, fallback) {
@@ -868,7 +885,7 @@ function fullText_(post) {
 
 function graphGet_(path) {
   try {
-    var res = UrlFetchApp.fetch('https://graph.facebook.com/v20.0/' + path, { muteHttpExceptions: true, followRedirects: true });
+    var res = UrlFetchApp.fetch(graphUrl_(path), { muteHttpExceptions: true, followRedirects: true });
     if (res.getResponseCode() !== 200) return null;
     return JSON.parse(res.getContentText());
   } catch (err) {
@@ -1163,8 +1180,8 @@ function publishFacebook_(post, imageUrl) {
   if (alreadyFb) return { channel: 'facebook', ok: true, skipped: true, id: alreadyFb, note: 'already posted today on the page' };
   try {
     var endpoint = imageUrl
-      ? 'https://graph.facebook.com/v20.0/' + pageId + '/photos'
-      : 'https://graph.facebook.com/v20.0/' + pageId + '/feed';
+      ? graphUrl_(pageId + '/photos')
+      : graphUrl_(pageId + '/feed');
     var payload = imageUrl
       ? { url: imageUrl, caption: fullText_(post), access_token: token }
       : { message: fullText_(post), link: CONFIG.website, access_token: token };
@@ -1192,7 +1209,7 @@ function publishInstagram_(post, imageUrl) {
   var alreadyIg = instagramAlreadyPosted_(igId, token, post);
   if (alreadyIg) return { channel: 'instagram', ok: true, skipped: true, id: alreadyIg, note: 'already posted today on instagram' };
   try {
-    var create = UrlFetchApp.fetch('https://graph.facebook.com/v20.0/' + igId + '/media', {
+    var create = UrlFetchApp.fetch(graphUrl_(igId + '/media'), {
       method: 'post',
       payload: { image_url: imageUrl, caption: fullText_(post), access_token: token },
       muteHttpExceptions: true
@@ -1201,7 +1218,7 @@ function publishInstagram_(post, imageUrl) {
       return { channel: 'instagram', ok: false, error: 'container_http_' + create.getResponseCode() + ': ' + create.getContentText().slice(0, 120) };
     }
     var creationId = JSON.parse(create.getContentText()).id;
-    var publish = UrlFetchApp.fetch('https://graph.facebook.com/v20.0/' + igId + '/media_publish', {
+    var publish = UrlFetchApp.fetch(graphUrl_(igId + '/media_publish'), {
       method: 'post',
       payload: { creation_id: creationId, access_token: token },
       muteHttpExceptions: true
@@ -1225,7 +1242,7 @@ function publishLinkedIn_(post, imageUrl) {
   if (!token || !author) return { channel: 'linkedin', ok: false, skipped: true, error: 'missing linkedin token or author urn' };
   var headers = {
     Authorization: 'Bearer ' + token,
-    'LinkedIn-Version': prop_('LINKEDIN_VERSION', '202405'),
+    'LinkedIn-Version': linkedinVersion_(),
     'X-Restli-Protocol-Version': '2.0.0'
   };
   var modern = {
@@ -1459,10 +1476,13 @@ function adapters_() {
     { name: 'instagram', enabled: hasInstagram_(), run: publishInstagram_, needsImage: true },
     { name: 'linkedin', enabled: hasLinkedIn_(), run: publishLinkedIn_, needsImage: false },
     { name: 'x', enabled: hasX_(), run: publishX_, needsImage: false },
-    { name: 'youtube', enabled: true, run: publishYouTube_, needsImage: false, needsVideo: true },
     { name: 'bluesky', enabled: hasBluesky_(), run: publishBluesky_, needsImage: false },
     { name: 'mastodon', enabled: hasMastodon_(), run: publishMastodon_, needsImage: false },
-    { name: 'devto', enabled: hasDevTo_(), run: publishDevTo_, needsImage: false }
+    { name: 'devto', enabled: hasDevTo_(), run: publishDevTo_, needsImage: false },
+    // Last on purpose: downloading and uploading a video is the slowest step and
+    // the one most likely to hit the 6 minute Apps Script execution limit. If the
+    // run is cut short, only YouTube is lost, not the text channels.
+    { name: 'youtube', enabled: true, run: publishYouTube_, needsImage: false, needsVideo: true }
   ];
   return all.filter(function (adapter) { return adapter.enabled && !channelDisabled_(adapter.name); });
 }
@@ -1518,6 +1538,7 @@ function publishAll_(post, imageUrl, media) {
  * Run these from the Apps Script editor:
  *   setupAll()          one-time setup: holiday calendar + daily trigger + log sheet
  *   channelCheck()      what is on, what is waiting for a key (publishes nothing)
+ *   tokenHealth()       are the expiring tokens still valid (one GET per service)
  *   dryRun()            builds today's post, card and video links, publishes nothing
  *   runDailyPost()      publishes today's post everywhere, exactly once per channel
  *   testAllChannels()   one clearly marked test post to every configured channel
@@ -1537,6 +1558,30 @@ function triesKey_(dateKey, channel) {
 /** Kept for older installs that only used the day level marker. */
 function postedKey_(key) {
   return 'posted_' + key;
+}
+
+/**
+ * Drop per-day markers older than STATE_KEEP_DAYS.
+ *
+ * Script Properties hold 500 KB for the whole project. Ten channels a day write
+ * three keys each, so the quota fills in a few years and then every setProperty
+ * throws - the daily run dies with no obvious cause. Keeping a month of history
+ * is enough for resetToday and for reading yesterday's status.
+ */
+function pruneStateKeys_(props, keepDays) {
+  var keep = Number(keepDays || prop_('STATE_KEEP_DAYS', '30'));
+  var cutoff = dateKey_(new Date(new Date().getTime() - keep * 86400000));
+  var removed = 0;
+  var all = props.getProperties();
+  Object.keys(all).forEach(function (name) {
+    var match = name.match(/^(?:done|tries)_(\d{4}-\d{2}-\d{2})_/) || name.match(/^posted_(\d{4}-\d{2}-\d{2})$/);
+    if (!match) return;
+    if (match[1] < cutoff) {
+      props.deleteProperty(name);
+      removed++;
+    }
+  });
+  return removed;
 }
 
 // ---------------------------------------------------------------------------
@@ -1577,10 +1622,97 @@ function setupAll() {
   return report;
 }
 
+/**
+ * Check the credentials that expire without warning.
+ *
+ * Meta long-lived tokens last about 60 days, LinkedIn tokens 60 days, GitHub
+ * personal access tokens expire on their own schedule, and a revoked bot token
+ * simply stops working. None of that shows up until the 08:30 run, so this
+ * function answers "is today going to work?" with one cheap GET per service.
+ */
+function tokenHealth() {
+  var checks = [];
+
+  function probe(channel, fn) {
+    try {
+      checks.push(fn());
+    } catch (err) {
+      checks.push({ channel: channel, ok: false, detail: String(err && err.message ? err.message : err) });
+    }
+  }
+
+  probe('github', function () {
+    var token = ghToken_();
+    if (!token) return { channel: 'github', ok: false, detail: 'missing GITHUB_TOKEN (the card cannot be hosted)' };
+    var repo = CONFIG.mediaRepo;
+    var res = UrlFetchApp.fetch('https://api.github.com/repos/' + repo.owner + '/' + repo.repo, {
+      headers: { Authorization: 'Bearer ' + token, 'User-Agent': 'gahonsh-autopilot', Accept: 'application/vnd.github+json' },
+      muteHttpExceptions: true
+    });
+    var code = res.getResponseCode();
+    return {
+      channel: 'github',
+      ok: code === 200,
+      detail: code === 200 ? 'token works' : 'http_' + code + ' - regenerate the token, media hosting is down'
+    };
+  });
+
+  probe('meta', function () {
+    var token = propAny_(['META_PAGE_TOKEN', 'FACEBOOK_PAGE_ACCESS_TOKEN']);
+    if (!token) return { channel: 'meta', ok: false, detail: 'missing META_PAGE_TOKEN' };
+    var res = UrlFetchApp.fetch(graphUrl_('me?fields=id,name'), {
+      headers: { Authorization: 'Bearer ' + token },
+      muteHttpExceptions: true
+    });
+    var code = res.getResponseCode();
+    return {
+      channel: 'meta',
+      ok: code === 200,
+      detail: code === 200 ? 'page token works' : 'http_' + code + ' - long-lived tokens last about 60 days, generate a new one'
+    };
+  });
+
+  probe('linkedin', function () {
+    var token = prop_('LINKEDIN_ACCESS_TOKEN');
+    if (!token) return { channel: 'linkedin', ok: false, detail: 'missing LINKEDIN_ACCESS_TOKEN' };
+    var res = UrlFetchApp.fetch('https://api.linkedin.com/v2/userinfo', {
+      headers: { Authorization: 'Bearer ' + token, 'LinkedIn-Version': linkedinVersion_() },
+      muteHttpExceptions: true
+    });
+    var code = res.getResponseCode();
+    return {
+      channel: 'linkedin',
+      ok: code === 200,
+      detail: code === 200 ? 'token works' : 'http_' + code + ' - token expired or version ' + linkedinVersion_() + ' sunset'
+    };
+  });
+
+  probe('telegram', function () {
+    var token = prop_('TELEGRAM_BOT_TOKEN');
+    if (!token) return { channel: 'telegram', ok: false, detail: 'missing TELEGRAM_BOT_TOKEN' };
+    var res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/getMe', { muteHttpExceptions: true });
+    var code = res.getResponseCode();
+    return { channel: 'telegram', ok: code === 200, detail: code === 200 ? 'bot works' : 'http_' + code };
+  });
+
+  probe('youtube', function () {
+    var ready = hasYouTubeService_();
+    return {
+      channel: 'youtube',
+      ok: ready,
+      detail: ready ? 'service added' : 'Services (+) -> YouTube Data API v3'
+    };
+  });
+
+  var problems = checks.filter(function (c) { return !c.ok; }).map(function (c) { return c.channel + ': ' + c.detail; });
+  var report = { at: new Date().toISOString(), ok: problems.length === 0, checks: checks, problems: problems };
+  Logger.log(JSON.stringify(report, null, 2));
+  return report;
+}
+
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
-
 function getLogSheet_() {
   var props = PropertiesService.getScriptProperties();
   var sheetId = props.getProperty('POSTLOG_SHEET_ID');
@@ -1739,6 +1871,7 @@ function runDailyPost(options) {
     });
 
     props.setProperty(postedKey_(key), JSON.stringify({ at: now.toISOString(), channels: okChannels }));
+    try { pruneStateKeys_(props); } catch (ignored) {}
 
     var onlySkips = okChannels.length === 0;
     return {

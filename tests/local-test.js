@@ -709,7 +709,96 @@ test('a crash before the channel loop is reported and logged, not thrown', () =>
 });
 
 /* ------------------------------------------------------------------ *
- * 7. Setup report                                                    *
+ * 7. API versions and expiring credentials                           *
+ * ------------------------------------------------------------------ */
+SECTION('versions');
+const graphUrls = (httpLog) => httpLog.map((c) => c.url).filter((u) => u.includes('graph.facebook.com'));
+
+test('facebook calls the configured Graph version, never a sunset one', () => {
+  const { context, httpLog } = makeSandbox({
+    props: { PUBLISH_IMAGE: 'no', META_PAGE_ID: '1', META_PAGE_TOKEN: 't' },
+    http: () => ({ code: 200, text: '{"id":"p1"}' }),
+  });
+  const post = vm.runInContext('buildDailyPost', context)(new Date());
+  vm.runInContext('publishFacebook_', context)(post, '');
+  const urls = graphUrls(httpLog);
+  assert.ok(urls.length > 0, 'no graph call made');
+  urls.forEach((u) => assert.ok(/graph\.facebook\.com\/v25\.0\//.test(u), u));
+});
+
+test('the Graph version can be moved forward with a property alone', () => {
+  const { context, httpLog } = makeSandbox({
+    props: { PUBLISH_IMAGE: 'no', META_PAGE_ID: '1', META_PAGE_TOKEN: 't', META_GRAPH_VERSION: 'v26.0' },
+    http: () => ({ code: 200, text: '{"id":"p1"}' }),
+  });
+  const post = vm.runInContext('buildDailyPost', context)(new Date());
+  vm.runInContext('publishFacebook_', context)(post, '');
+  assert.ok(graphUrls(httpLog).every((u) => u.includes('/v26.0/')), graphUrls(httpLog).join(' '));
+});
+
+test('linkedin sends a version that has not been retired', () => {
+  const { context, httpLog } = makeSandbox({
+    props: { PUBLISH_IMAGE: 'no', LINKEDIN_ACCESS_TOKEN: 't', LINKEDIN_AUTHOR_URN: 'urn:li:person:1' },
+    http: () => ({ code: 201, text: '{}', headers: { 'x-restli-id': 'urn:li:share:1' } }),
+  });
+  const post = vm.runInContext('buildDailyPost', context)(new Date());
+  vm.runInContext('publishLinkedIn_', context)(post, '');
+  const call = httpLog.find((c) => c.url.includes('api.linkedin.com'));
+  assert.ok(call, 'no linkedin call made');
+  assert.strictEqual(call.params.headers['LinkedIn-Version'], '202611');
+});
+
+test('the linkedin version can be moved forward with a property alone', () => {
+  const { context, httpLog } = makeSandbox({
+    props: { PUBLISH_IMAGE: 'no', LINKEDIN_ACCESS_TOKEN: 't', LINKEDIN_AUTHOR_URN: 'urn:li:person:1', LINKEDIN_VERSION: '202612' },
+    http: () => ({ code: 201, text: '{}' }),
+  });
+  const post = vm.runInContext('buildDailyPost', context)(new Date());
+  vm.runInContext('publishLinkedIn_', context)(post, '');
+  const call = httpLog.find((c) => c.url.includes('api.linkedin.com'));
+  assert.strictEqual(call.params.headers['LinkedIn-Version'], '202612');
+});
+
+test('old daily markers are pruned so the property store cannot fill up', () => {
+  const { context, props } = makeSandbox({
+    props: {
+      'done_2020-01-01_telegram': '1',
+      'tries_2020-01-01_telegram': '1',
+      'posted_2020-01-01': '{}',
+      'done_2099-01-01_telegram': '1',
+      POSTLOG_SHEET_ID: 'sheet-1',
+    },
+  });
+  const store = vm.runInContext('PropertiesService', context).getScriptProperties();
+  const removed = vm.runInContext('pruneStateKeys_', context)(store);
+  assert.strictEqual(removed, 3, JSON.stringify(Object.keys(props)));
+  assert.ok(props['done_2099-01-01_telegram'], 'recent marker must survive');
+  assert.ok(props.POSTLOG_SHEET_ID, 'settings must survive');
+  assert.ok(!props['posted_2020-01-01']);
+});
+
+test('tokenHealth names the expired token instead of waiting for 08:30', () => {
+  const { context } = makeSandbox({
+    props: { GITHUB_TOKEN: 'g', META_PAGE_TOKEN: 'm', LINKEDIN_ACCESS_TOKEN: 'l', TELEGRAM_BOT_TOKEN: 't' },
+    http: (url) => (url.includes('api.linkedin.com') ? { code: 401, text: '{}' } : { code: 200, text: '{}' }),
+  });
+  const report = vm.runInContext('tokenHealth', context)();
+  const by = report.checks.reduce((acc, c) => Object.assign(acc, { [c.channel]: c }), {});
+  assert.strictEqual(by.linkedin.ok, false);
+  assert.strictEqual(by.github.ok, true);
+  assert.strictEqual(by.meta.ok, true);
+  assert.strictEqual(report.ok, false);
+  assert.ok(report.problems.some((p) => p.indexOf('linkedin:') === 0), report.problems.join(' | '));
+});
+
+test('youtube is attempted last so a timeout cannot cost the text channels', () => {
+  const { context } = makeSandbox({ props: { PUBLISH_IMAGE: 'no' } });
+  const names = vm.runInContext('adapters_', context)().map((a) => a.name);
+  assert.strictEqual(names[names.length - 1], 'youtube', names.join(','));
+});
+
+/* ------------------------------------------------------------------ *
+ * 8. Setup report                                                    *
  * ------------------------------------------------------------------ */
 SECTION('setup');
 test('channelMatrix is honest about what is on and what is missing', () => {
